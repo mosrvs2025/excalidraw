@@ -299,7 +299,7 @@ function flowOrder(g: CanvasGraph): CanvasItem[] {
   return order;
 }
 
-function docFromGraph(g: CanvasGraph, title: string): string {
+export function docFromGraph(g: CanvasGraph, title: string): string {
   const lines: string[] = [`# ${title}`, ""];
   if (g.edges.length) {
     const order = flowOrder(g);
@@ -433,6 +433,7 @@ export function planOffline(req: IntentRequest): Plan {
     const code = mermaidIn(g);
     if (code) return { say: "Drew your Mermaid diagram.", ops: [{ op: "mermaid", code }], engine: "offline" };
   }
+  if (req.intent === "refine") return { say: "", ops: [{ op: "refine" }], engine: "offline" };
   if (req.intent === "ocr") return { say: "Select an image or sketch first.", ops: [], engine: "offline" };
 
   // 1. known scaffolds win when explicitly requested by name
@@ -457,6 +458,8 @@ export function planOffline(req: IntentRequest): Plan {
   }
 
   switch (intent) {
+    case "refine":
+      return { say: "", ops: [{ op: "refine" }], engine: "offline" };
     case "flow": {
       const items = outline.length >= 2 ? outline : parseOutline(q.replace(/^[^:]*:\s*/, ""));
       const d = outlineToDiagram(items, topicOf(q));

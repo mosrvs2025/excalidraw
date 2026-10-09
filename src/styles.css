@@ -238,3 +238,12 @@ button { font-family: inherit; }
 .cm-host { flex: 1; min-height: 0; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; font-size: 13px; }
 .cm-host .cm-editor { height: 100%; } .cm-host .cm-scroller { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .cm-host .cm-editor.cm-focused { outline: none; box-shadow: inset 0 0 0 2px var(--acc); }
+.present-bar { position: fixed; z-index: 30; bottom: 18px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 4px; padding: 4px; border-radius: 999px; background: rgba(20,20,28,.78); color: #fff; backdrop-filter: blur(10px); opacity: .35; transition: opacity .2s; font: 600 13px var(--font); }
+.present-bar:hover, .present-bar:focus-within { opacity: 1; }
+.present-bar button { all: unset; cursor: pointer; width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%; font-size: 20px; }
+.present-bar button:hover:not(:disabled) { background: rgba(255,255,255,.18); } .present-bar button:disabled { opacity: .3; cursor: default; }
+.present-bar span { min-width: 54px; text-align: center; font-variant-numeric: tabular-nums; }
+.mic { all: unset; cursor: pointer; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 10px; font-size: 15px; color: var(--mut); }
+.mic:hover { background: var(--acc-soft); color: var(--ink); } .mic.on { color: #e03131; animation: pulse 1s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .4; } }
+.app.presenting .layer-ui__wrapper { display: none !important; }

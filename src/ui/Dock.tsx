@@ -22,6 +22,38 @@ export function Dock(p: DockProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   const [text, setText] = useState("");
+  const [listening, setListening] = useState(false);
+  const recRef = useRef<any>(null);
+  const SR = typeof window !== "undefined" ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition : null;
+
+  /** Dictation: speak, see the words appear, and the canvas acts when you stop talking. */
+  const toggleVoice = () => {
+    if (!SR || p.busy) return;
+    if (listening) return recRef.current?.stop();
+    const rec = new SR();
+    recRef.current = rec;
+    rec.lang = navigator.language || "en-US";
+    rec.interimResults = true;
+    rec.continuous = false;
+    let finalText = "";
+    rec.onresult = (e: any) => {
+      let t = "";
+      for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
+      setText(t);
+      if (e.results[e.results.length - 1].isFinal) finalText = t;
+    };
+    rec.onerror = () => setListening(false);
+    rec.onend = () => {
+      setListening(false);
+      const v = finalText.trim();
+      if (v) {
+        setText("");
+        p.onRun(v);
+      }
+    };
+    setListening(true);
+    rec.start();
+  };
 
   useLayoutEffect(() => {
     const el = ref.current;
@@ -121,6 +153,11 @@ export function Dock(p: DockProps) {
                 }
               }}
             />
+            {SR && (
+              <button type="button" className={`mic ${listening ? "on" : ""}`} onClick={toggleVoice} aria-label={listening ? "Stop dictation" : "Dictate"} aria-pressed={listening} title="Dictate" data-testid="mic">
+                🎙
+              </button>
+            )}
             <button type="button" className={`engine ${p.engine}`} onClick={p.onEngineClick} title={p.engine === "claude" ? `Powered by ${p.engineLabel}` : "Offline engine — click to connect an AI"}>
               {p.engine === "claude" ? `✦ ${p.engineLabel}` : "○ Offline"}
             </button>

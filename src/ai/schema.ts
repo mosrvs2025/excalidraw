@@ -55,6 +55,7 @@ export type Op =
   | { op: "connect"; from: string; to: string; label?: string }
   | { op: "restyle"; ids: string[]; color: ColorName }
   | { op: "relayout"; layout: DiagramLayout }
+  | { op: "refine"; ids?: string[] }
   | { op: "delete"; ids: string[] };
 
 export interface Plan {
@@ -201,6 +202,9 @@ export function sanitizePlan(raw: unknown): Plan {
         if (c) ops.push({ op: "restyle", ids: arr(o.ids).map(String), color: c });
         break;
       }
+      case "refine":
+        ops.push({ op: "refine", ids: arr(o.ids).map(String) });
+        break;
       case "relayout":
         if (LAYOUTS.includes(o.layout as DiagramLayout))
           ops.push({ op: "relayout", layout: o.layout as DiagramLayout });

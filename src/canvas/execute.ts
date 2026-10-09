@@ -19,7 +19,8 @@ import {
   type LNode,
 } from "./layout";
 import { BRANCH_CYCLE, PALETTE } from "./palette";
-import { findFreeSpot } from "./placement";
+import { edgePoint, findFreeSpot } from "./placement";
+import { recognizeStroke, type Pt } from "./shapes";
 import { parseMermaidFlow } from "./mermaidFlow";
 
 /* Fonts: 5 = Excalifont (hand), 6 = Nunito (clean) */
@@ -390,28 +391,6 @@ export function buildAnswer(
 
 type El = ExcalidrawElement;
 
-/** Point on element's outline along the ray from its centre toward (tx,ty). */
-function edgePoint(e: El, tx: number, ty: number, gap = 6): [number, number] {
-  const cx = e.x + e.width / 2;
-  const cy = e.y + e.height / 2;
-  const dx = tx - cx;
-  const dy = ty - cy;
-  const len = Math.hypot(dx, dy) || 1;
-  const ux = dx / len;
-  const uy = dy / len;
-  const hw = e.width / 2;
-  const hh = e.height / 2;
-  let t: number;
-  if (e.type === "ellipse") {
-    t = 1 / Math.sqrt((ux * ux) / (hw * hw) + (uy * uy) / (hh * hh));
-  } else if (e.type === "diamond") {
-    t = 1 / (Math.abs(ux) / hw + Math.abs(uy) / hh);
-  } else {
-    t = Math.min(hw / (Math.abs(ux) || 1e-9), hh / (Math.abs(uy) || 1e-9));
-  }
-  return [cx + ux * (t + gap), cy + uy * (t + gap)];
-}
-
 /** Re-route a straight bound arrow between its two endpoints after they moved. */
 function routeArrow(arrow: El, a: El, b: El): Partial<El> {
   const [x1, y1] = edgePoint(a, b.x + b.width / 2, b.y + b.height / 2);
@@ -448,6 +427,7 @@ export interface ExecResult {
   created: string[];
   touched: string[];
   flagged: number;
+  cleaned: number;
 }
 
 interface Ctx {
@@ -519,6 +499,7 @@ export async function executePlan(
     return placed;
   };
 
+  let refined = 0;
   let firstCreateAnchored = false;
   void firstCreateAnchored;
 
@@ -707,6 +688,38 @@ export async function executePlan(
         ctx.created.push(...finalMade);
         break;
       }
+      case "refine": {
+        const targets = ctx.graph.items.length && ctx.graph.scope === "selection" ? new Set(ctx.graph.items.map((i) => i.id)) : null;
+        const skel: Sk[] = [];
+        let cleaned = 0;
+        for (let i = 0; i < ctx.els.length; i++) {
+          const e = ctx.els[i] as any;
+          if (e.isDeleted || (targets && !targets.has(e.id))) continue;
+          if (e.type === "freedraw") {
+            const pts = (e.points as Pt[]).map(([px, py]) => [px + e.x, py + e.y] as Pt);
+            const r = recognizeStroke(pts);
+            if (!r) continue;
+            const base = { strokeColor: e.strokeColor, strokeWidth: e.strokeWidth, roughness: 0, backgroundColor: "transparent" };
+            if (r.kind === "line")
+              skel.push({ type: "arrow", x: r.from[0], y: r.from[1], points: [[0, 0], [r.to[0] - r.from[0], r.to[1] - r.from[1]]], endArrowhead: "arrow", ...base } as Sk);
+            else skel.push({ type: r.kind, x: r.x, y: r.y, width: r.w, height: r.h, roundness: r.kind === "rectangle" ? { type: 3 } : null, ...base } as Sk);
+            ctx.els[i] = newElementWith(e, { isDeleted: true });
+            cleaned++;
+          } else if (["rectangle", "ellipse", "diamond", "arrow", "line"].includes(e.type) && e.roughness > 0) {
+            ctx.els[i] = newElementWith(e, { roughness: 0 } as any);
+            ctx.touched.add(e.id);
+            cleaned++;
+          }
+        }
+        if (skel.length) {
+          const made = convertToExcalidrawElements(skel);
+          ctx.els.push(...made);
+          ctx.created.push(...made);
+        }
+        if (!cleaned) throw new Error("I couldn't find rough shapes to clean up in that selection");
+        refined = cleaned;
+        break;
+      }
       case "restyle": {
         for (const alias of op.ids) {
           const id = ctx.graph.aliasToId[alias] ?? alias;
@@ -758,7 +771,7 @@ export async function executePlan(
   } else {
     await animateMoves(ctx);
   }
-  return { created: createdIds, touched: [...ctx.touched, ...ctx.moves.keys()], flagged: ctx.flagged };
+  return { cleaned: refined, created: createdIds, touched: [...ctx.touched, ...ctx.moves.keys()], flagged: ctx.flagged };
 }
 
 /* ───────────────────────── cluster + relayout ───────────────────────── */

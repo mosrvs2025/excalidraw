@@ -11,7 +11,8 @@ export type IntentId =
   | "explain"
   | "tidy"
   | "mermaid"
-  | "ocr";
+  | "ocr"
+  | "refine";
 
 export interface Suggestion {
   id: IntentId;
@@ -34,6 +35,14 @@ export function mermaidIn(g: CanvasGraph): string | null {
 }
 
 export function suggestFor(g: CanvasGraph): Suggestion[] {
+  const list = suggestBase(g);
+  // freehand strokes can always be cleaned into real shapes
+  if (g.items.some((i) => i.kind === "sketch") && !list.some((s) => s.id === "refine") && !mermaidIn(g))
+    list.push({ id: "refine", icon: "◇", label: "Clean up", prompt: "Turn my rough strokes into clean shapes" });
+  return list;
+}
+
+function suggestBase(g: CanvasGraph): Suggestion[] {
   const p = profileOf(g);
   const out: Suggestion[] = [];
   if (!p.count) return out;
@@ -84,6 +93,7 @@ export function suggestFor(g: CanvasGraph): Suggestion[] {
 export function classifyPrompt(prompt: string): IntentId | null {
   const q = prompt.toLowerCase();
   const rules: [RegExp, IntentId][] = [
+    [/clean ?up|refine|snap|straighten (my|the)|neaten (my|the) (shapes|drawing)|make (it|them|this) (neat|clean|crisp)/, "refine"],
     [/mind ?-?map|brainstorm|expand|radial/, "mindmap"],
     [/review|critique|find (the )?(gaps|issues|problems|holes)|validate|audit|lint|what.?s missing|sanity/, "review"],
     [/cluster|group|organi[sz]e|categori[sz]e|themes?|sort (these|them)|affinity/, "cluster"],

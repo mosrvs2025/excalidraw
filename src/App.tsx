@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Excalidraw,
+  convertToExcalidrawElements,
   MainMenu,
   CaptureUpdateAction,
   getCommonBounds,
@@ -25,6 +26,7 @@ import { askProvider } from "./ai/providers";
 import type { Plan } from "./ai/schema";
 import { TEMPLATES } from "./live/templates";
 import { LiveObject, frameRegistry } from "./live/LiveObject";
+import { composeApp } from "./live/runtime";
 import {
   addVersion,
   Autosaver,
@@ -43,6 +45,9 @@ import {
 } from "./store/projects";
 import { BroadcastSync, newRoomId, projectOfRoom, randomIdentity, roomOf, setRoom, WebSocketSync, type SyncAdapter, type SyncMessage } from "./store/sync";
 import { decodeBoard, encodeBoard, MAX_LINK_CHARS } from "./store/share";
+import { exportJsonCanvas, importJsonCanvas } from "./canvas/jsoncanvas";
+import { docFromGraph } from "./ai/local";
+import { downloadText, slugify } from "./store/download";
 import { Dock } from "./ui/Dock";
 import { Expanded, HistoryPanel, LiveEditor, Onboarding, ProjectMenu, SettingsDialog, Welcome } from "./ui/Panels";
 
@@ -160,6 +165,7 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
   const [panel, setPanel] = useState<null | "history" | "settings" | "projects">(null);
   const [room, setRoomState] = useState<string | null>(() => roomOf(meta.id));
   const [link, setLink] = useState<"connecting" | "open" | "closed">("closed");
+  const [slide, setSlide] = useState<number | null>(null);
   const [onboard, setOnboard] = useState(() => !wasOnboarded());
   const [versions, setVersions] = useState<Version[]>([]);
   const [editing, setEditing] = useState<null | { id: string; kind: "app" | "doc" }>(null);
@@ -577,7 +583,7 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
         // annotations-only plans (review): leave the result unobstructed
         if (ops.length && ops.every((o) => o.op === "flag") && res.created.length)
           a.updateScene({ appState: { selectedElementIds: {} } as any });
-        say(plan.say || (res.created.length || res.touched.length ? "Done." : "Nothing changed."), {
+        say(plan.say || (res.cleaned ? `Cleaned up ${res.cleaned} shape${res.cleaned > 1 ? "s" : ""}.` : res.created.length || res.touched.length ? "Done." : "Nothing changed."), {
           note: plan.note,
           undo: res.created.length > 0 || res.touched.length > 0 || ops.length !== plan.ops.length,
         });
@@ -622,6 +628,15 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
     if (liveMeta.kind === "app") list.push({ id: "open", label: "Open", icon: "⤢", run: () => setExpanded({ id: liveEl.id }) });
     list.push({ id: "edit", label: liveMeta.kind === "app" ? "Code" : "Edit", icon: liveMeta.kind === "app" ? "‹›" : "✎", run: () => setEditing({ id: liveEl.id, kind: liveMeta.kind as "app" | "doc" }) });
     if (liveMeta.kind === "app" && (liveMeta as any).state != null) list.push({ id: "reset", label: "Reset", icon: "↺", run: () => patchLive(liveEl.id, (m) => ({ ...m, state: undefined })) });
+    list.push({
+      id: "download",
+      label: "Save",
+      icon: "⤓",
+      run: () =>
+        liveMeta.kind === "app"
+          ? downloadText(`${slugify(liveMeta.title || "live-object")}.html`, composeApp(liveMeta.html ?? "", (liveMeta as any).state, theme), "text/html")
+          : downloadText(`${slugify(liveMeta.title || "document")}.md`, liveMeta.markdown ?? "", "text/markdown"),
+    });
     list.push({ id: "dup", label: "Duplicate", icon: "⧉", run: duplicateLive });
     return list;
   }, [liveEl?.id, liveMeta?.kind, (liveMeta as any)?.state != null]);
@@ -679,6 +694,89 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
     setRoomState(null);
     setLink("closed");
     say("Stopped live sharing. Your copy stays here.");
+  };
+
+  /* ───────── present mode: frames are slides ───────── */
+  const slides = () => {
+    const a = apiRef.current;
+    if (!a) return [];
+    return a
+      .getSceneElements()
+      .filter((e) => e.type === "frame" || e.type === "magicframe")
+      .sort((p, q) => (Math.abs(p.y - q.y) > 80 ? p.y - q.y : p.x - q.x));
+  };
+  const showSlide = (i: number) => {
+    const a = apiRef.current;
+    if (!a) return;
+    const fr = slides();
+    const target = fr.length ? fr[Math.min(Math.max(i, 0), fr.length - 1)] : null;
+    a.scrollToContent((target ?? a.getSceneElements()) as any, { fitToViewport: true, viewportZoomFactor: 0.88, animate: true, duration: 450, maxZoom: 4 });
+    setSlide(target ? fr.indexOf(target) : 0);
+  };
+  const present = () => {
+    const a = apiRef.current;
+    if (!a || !a.getSceneElements().length) return say("Nothing to present yet.");
+    if (!slides().length) say("No frames yet — presenting the whole board.", { note: "Press F and draw a frame around each slide to present step by step." });
+    setPanel(null);
+    setSlide(0);
+    setTimeout(() => showSlide(0), 60);
+  };
+  useEffect(() => {
+    if (slide === null) return;
+    const n = Math.max(slides().length, 1);
+    const k = (e: KeyboardEvent) => {
+      if (["ArrowRight", "ArrowDown", "PageDown", " ", "Enter"].includes(e.key)) (e.preventDefault(), slide < n - 1 && showSlide(slide + 1));
+      else if (["ArrowLeft", "ArrowUp", "PageUp", "Backspace"].includes(e.key)) (e.preventDefault(), slide > 0 && showSlide(slide - 1));
+      else if (e.key === "Home") showSlide(0);
+      else if (e.key === "End") showSlide(n - 1);
+      else if (e.key === "Escape") setSlide(null);
+    };
+    window.addEventListener("keydown", k, true);
+    return () => window.removeEventListener("keydown", k, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slide]);
+
+  /* ───────── export / import ───────── */
+  const exportMarkdown = () => {
+    const a = apiRef.current!;
+    const g = buildGraph(a.getSceneElements(), []);
+    downloadText(`${slugify(name)}.md`, docFromGraph(g, name), "text/markdown");
+    say("Saved as Markdown.");
+  };
+  const exportJsonCanvasFile = () => {
+    const a = apiRef.current!;
+    downloadText(`${slugify(name)}.canvas`, JSON.stringify(exportJsonCanvas(a.getSceneElementsIncludingDeleted()), null, 2), "application/json");
+    say("Saved as JSON Canvas.", { note: "Opens in Obsidian and other JSON Canvas tools." });
+  };
+  const importJsonCanvasFile = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".canvas,.json,application/json";
+    input.onchange = async () => {
+      const a = apiRef.current;
+      const f = input.files?.[0];
+      if (!a || !f) return;
+      try {
+        const data = JSON.parse(await f.text());
+        const sk = importJsonCanvas(data, uid("jc"));
+        if (!sk.length) return say("That file has no canvas nodes.");
+        await checkpoint(`Before import: ${f.name}`, "ai");
+        const { ensureFonts } = await import("./canvas/execute");
+        await ensureFonts(JSON.stringify(sk).slice(0, 3000));
+        const made = convertToExcalidrawElements(sk as any, { regenerateIds: false });
+        const [x1, y1] = getCommonBounds(made);
+        const c = sceneCenter(a);
+        const cur = a.getSceneElementsIncludingDeleted();
+        const shifted = made.map((e) => ({ ...e, x: e.x - x1 + c.x - 300, y: e.y - y1 + c.y - 200 })) as any[];
+        a.updateScene({ elements: [...cur, ...shifted], captureUpdate: CaptureUpdateAction.IMMEDIATELY });
+        select(a, shifted.filter((e) => e.type !== "arrow" && !e.containerId).map((e) => e.id));
+        reveal(a, shifted);
+        say(`Imported ${f.name}.`, { undo: true });
+      } catch {
+        say("Couldn't read that file.", { note: "Expected JSON Canvas (.canvas)." });
+      }
+    };
+    input.click();
   };
 
   /* ───────── starters ───────── */
@@ -775,7 +873,7 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
   const expandedEl = expanded ? (api?.getSceneElements().find((e) => e.id === expanded.id) as ExcalidrawEmbeddableElement | undefined) : undefined;
 
   return (
-    <div className={`app ${mobile ? "is-mobile" : ""}`} data-theme={theme}>
+    <div className={`app ${mobile ? "is-mobile" : ""} ${slide !== null ? "presenting" : ""}`} data-theme={theme}>
       <Excalidraw
         excalidrawAPI={(a) => {
           apiRef.current = a;
@@ -792,6 +890,8 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
           scrollToContent: !initial.view && initial.elements.length > 0,
         }}
         theme={theme}
+        viewModeEnabled={slide !== null}
+        zenModeEnabled={slide !== null}
         autoFocus
         onChange={onChange}
         onPointerUpdate={(p) => {
@@ -804,7 +904,7 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
         }}
         validateEmbeddable={(link) => link.startsWith(LIVE_HOST) || /^https:\/\/(www\.)?(youtube\.com|youtu\.be|vimeo\.com|figma\.com)/.test(link)}
         renderEmbeddable={(el) => (getMeta(el) ? <LiveObject element={el} theme={theme} /> : null)}
-        renderTopRightUI={() => (
+        renderTopRightUI={() => slide !== null ? null : (
           <div className="topright" onPointerDown={(e) => e.stopPropagation()}>
             {peers.length > 0 && (
               <div className="presence" title={`${peers.length} other${peers.length > 1 ? "s" : ""} in this board (other tabs)`} data-testid="presence">
@@ -840,12 +940,24 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
           <MainMenu.Item onSelect={room ? leaveLive : shareLive} data-testid="share-live">
             {room ? "Stop live sharing" : "Share live…"}
           </MainMenu.Item>
+          <MainMenu.Item onSelect={present} data-testid="present">
+            Present
+          </MainMenu.Item>
           <MainMenu.Item onSelect={openHistory}>Version history</MainMenu.Item>
           <MainMenu.Item onSelect={shareLink} data-testid="share-link">
             Copy share link
           </MainMenu.Item>
           <MainMenu.Item onSelect={() => setPanel("settings")}>Intelligence settings</MainMenu.Item>
           <MainMenu.Separator />
+          <MainMenu.Item onSelect={exportMarkdown} data-testid="export-md">
+            Export as Markdown
+          </MainMenu.Item>
+          <MainMenu.Item onSelect={exportJsonCanvasFile} data-testid="export-jsoncanvas">
+            Export as JSON Canvas
+          </MainMenu.Item>
+          <MainMenu.Item onSelect={importJsonCanvasFile} data-testid="import-jsoncanvas">
+            Import JSON Canvas…
+          </MainMenu.Item>
           <MainMenu.DefaultItems.LoadScene />
           <MainMenu.DefaultItems.Export />
           <MainMenu.DefaultItems.SaveAsImage />
@@ -858,7 +970,7 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
         </MainMenu>
       </Excalidraw>
 
-      <div className="pill" onPointerDown={(e) => e.stopPropagation()}>
+      {slide === null && <div className="pill" onPointerDown={(e) => e.stopPropagation()}>
         <span className="logo" aria-hidden />
         {renaming ? (
           <input
@@ -893,13 +1005,30 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
             onClose={() => setPanel(null)}
           />
         )}
-      </div>
+      </div>}
 
-      {empty && !busy && <Welcome onStarter={starter} onFocus={() => inputRef.current?.focus()} />}
+      {slide !== null && (
+        <div className="present-bar" onPointerDown={(e) => e.stopPropagation()} data-testid="present-bar">
+          <button onClick={() => slide > 0 && showSlide(slide - 1)} aria-label="Previous slide" disabled={slide === 0}>
+            ‹
+          </button>
+          <span data-testid="slide-counter">
+            {slide + 1} / {Math.max(slides().length, 1)}
+          </span>
+          <button onClick={() => slide < Math.max(slides().length, 1) - 1 && showSlide(slide + 1)} aria-label="Next slide" disabled={slide >= Math.max(slides().length, 1) - 1}>
+            ›
+          </button>
+          <button onClick={() => setSlide(null)} aria-label="Exit presentation" data-testid="exit-present">
+            ✕
+          </button>
+        </div>
+      )}
+
+      {empty && slide === null && !busy && <Welcome onStarter={starter} onFocus={() => inputRef.current?.focus()} />}
 
       {busy && sel.rect && <div className="scan" style={{ left: sel.rect.x - 8, top: sel.rect.y - 8, width: sel.rect.w + 16, height: sel.rect.h + 16 }} />}
 
-      <Dock
+      {slide === null && <Dock
         rect={sel.rect}
         suggestions={suggestions}
         actions={actions}
@@ -912,7 +1041,7 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
         onCancel={() => abortRef.current?.abort()}
         mobile={mobile}
         inputRef={inputRef}
-      />
+      />}
 
       {toast && (
         <div className="toast" role="status" data-testid="toast" key={toast.id} style={mobile ? undefined : undefined}>

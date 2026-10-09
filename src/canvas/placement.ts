@@ -47,3 +47,26 @@ function bounds(group: Set<Box>) {
   return [x1, y1, x2, y2] as const;
 }
 
+
+/** Point on element's outline along the ray from its centre toward (tx,ty). */
+export function edgePoint(e: Box & { type?: string }, tx: number, ty: number, gap = 6): [number, number] {
+  const cx = e.x + e.width / 2;
+  const cy = e.y + e.height / 2;
+  const dx = tx - cx;
+  const dy = ty - cy;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  const hw = e.width / 2;
+  const hh = e.height / 2;
+  let t: number;
+  if (e.type === "ellipse") {
+    t = 1 / Math.sqrt((ux * ux) / (hw * hw) + (uy * uy) / (hh * hh));
+  } else if (e.type === "diamond") {
+    t = 1 / (Math.abs(ux) / hw + Math.abs(uy) / hh);
+  } else {
+    t = Math.min(hw / (Math.abs(ux) || 1e-9), hh / (Math.abs(uy) || 1e-9));
+  }
+  return [cx + ux * (t + gap), cy + uy * (t + gap)];
+}
+
