@@ -82,21 +82,27 @@ export interface ClaudeRequest {
   editing?: { title?: string; html?: string; markdown?: string };
 }
 
-export function buildPayload(req: ClaudeRequest) {
+export function buildUserText(req: ClaudeRequest) {
   const ctx = JSON.stringify(graphForModel(req.graph));
-  const content: any[] = [];
-  if (req.imageBase64)
-    content.push({ type: "image", source: { type: "base64", media_type: "image/png", data: req.imageBase64 } });
   let text = `Canvas context (${req.graph.scope === "selection" ? "the user's current selection" : "the whole canvas — nothing is selected"}):\n${ctx}\n\n`;
   if (req.editing?.html)
     text += `The selection includes a live app titled "${req.editing.title ?? ""}". Its current HTML is below. When the request is about changing it, return an "app" op with the COMPLETE updated document (keep what works).\n<current_html>\n${req.editing.html.slice(0, 60000)}\n</current_html>\n\n`;
   if (req.editing?.markdown)
     text += `The selection includes a document titled "${req.editing.title ?? ""}". Current Markdown:\n<current_markdown>\n${req.editing.markdown.slice(0, 30000)}\n</current_markdown>\nWhen the request is about changing it, return a "doc" op with the COMPLETE updated document.\n\n`;
-  text += `Request: ${req.prompt}`;
-  content.push({ type: "text", text });
+  return text + `Request: ${req.prompt}`;
+}
+
+export const systemPrompt = () => SYSTEM + `\n\nAvailable base CSS for apps (already injected; you may override):\n${BASE_CSS.slice(0, 1500)}`;
+export { TOOL };
+
+export function buildPayload(req: ClaudeRequest) {
+  const content: any[] = [];
+  if (req.imageBase64)
+    content.push({ type: "image", source: { type: "base64", media_type: "image/png", data: req.imageBase64 } });
+  content.push({ type: "text", text: buildUserText(req) });
   return {
     max_tokens: 8000,
-    system: SYSTEM + `\n\nAvailable base CSS for apps (already injected; you may override):\n${BASE_CSS.slice(0, 1500)}`,
+    system: systemPrompt(),
     messages: [{ role: "user", content }],
     tools: [TOOL],
     tool_choice: { type: "tool", name: "canvas_plan" },

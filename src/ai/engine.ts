@@ -1,4 +1,5 @@
-import { askClaude, probeServer, type ClaudeRequest } from "./claude";
+import { probeServer, type ClaudeRequest } from "./claude";
+import { askProvider } from "./providers";
 import { planOffline } from "./local";
 import type { IntentId } from "./intents";
 import type { Plan } from "./schema";
@@ -14,7 +15,8 @@ export type EngineKind = "claude" | "offline";
 
 export async function engineAvailable(s: Settings): Promise<EngineKind> {
   if (s.mode === "offline") return "offline";
-  if (s.apiKey) return "claude";
+  // a local/custom endpoint may need no key; every hosted provider does
+  if (s.apiKey || (s.provider === "custom" && s.baseUrl)) return "claude";
   return (await serverHasClaude()) ? "claude" : "offline";
 }
 
@@ -27,11 +29,11 @@ export async function runIntent(input: RunInput, s: Settings, signal?: AbortSign
   const kind = await engineAvailable(s);
   if (kind === "claude") {
     try {
-      return await askClaude(input, s, await serverHasClaude(), signal);
+      return await askProvider(input, s, await serverHasClaude(), signal);
     } catch (e: any) {
       if (e?.name === "AbortError") throw e;
       const plan = planOffline(input);
-      return { ...plan, note: `Claude unavailable (${String(e?.message ?? e).slice(0, 80)}) — used the offline engine.` };
+      return { ...plan, note: `AI unavailable (${String(e?.message ?? e).slice(0, 80)}) — used the offline engine.` };
     }
   }
   return planOffline(input);

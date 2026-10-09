@@ -2,8 +2,9 @@ import { expect, type Page } from "@playwright/test";
 
 export const SHOTS = process.env.SHOTS_DIR || "test-results/shots";
 
-export async function openApp(page: Page, path = "/") {
+export async function openApp(page: Page, path = "/", opts: { onboarding?: boolean } = {}) {
   const errors: string[] = [];
+  if (!opts.onboarding) await page.addInitScript(() => localStorage.setItem("lumen:onboarded", "1"));
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto(path);
   await page.waitForSelector(".excalidraw-container");

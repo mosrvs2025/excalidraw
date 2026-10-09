@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { diffScenes, relativeTime, type ProjectMeta, type Version } from "../store/projects";
-import { DEFAULT_MODEL, type Settings } from "../ai/settings";
+import { PROVIDERS, type ProviderId, type Settings } from "../ai/settings";
 import { AppFrame } from "../live/LiveObject";
 import { renderMarkdown } from "../live/runtime";
 
@@ -96,36 +96,100 @@ export function HistoryPanel({
   );
 }
 
-/* ───────── settings ───────── */
+/* ───────── AI setup (shared by onboarding + settings) ───────── */
+
+type TestState = null | "testing" | { ok: boolean; msg: string };
+
+function ProviderSetup({ settings, onChange, onTest }: { settings: Settings; onChange: (s: Settings) => void; onTest?: (s: Settings) => Promise<string | null> }) {
+  const [show, setShow] = useState(false);
+  const [test, setTest] = useState<TestState>(null);
+  const info = PROVIDERS[settings.provider];
+  const pick = (id: ProviderId) => {
+    const prevDefault = PROVIDERS[settings.provider].model;
+    onChange({ ...settings, provider: id, model: !settings.model || settings.model === prevDefault ? PROVIDERS[id].model : settings.model });
+    setTest(null);
+  };
+  return (
+    <div className="setup">
+      <div className="providers" role="radiogroup" aria-label="AI provider">
+        {(Object.keys(PROVIDERS) as ProviderId[]).map((id) => (
+          <button key={id} type="button" role="radio" aria-checked={settings.provider === id} className={settings.provider === id ? "on" : ""} onClick={() => pick(id)} data-testid={`provider-${id}`}>
+            {PROVIDERS[id].short}
+          </button>
+        ))}
+      </div>
+      {settings.provider === "custom" && (
+        <label>
+          Endpoint <span className="mut">(OpenAI-compatible — OpenRouter, Groq, Ollama, LM Studio…)</span>
+          <input value={settings.baseUrl} placeholder="https://openrouter.ai/api/v1" onChange={(e) => onChange({ ...settings, baseUrl: e.target.value.trim() })} onKeyDown={(e) => e.stopPropagation()} data-testid="base-url" />
+        </label>
+      )}
+      <label>
+        {info.label} API key <span className="mut">— stays in this browser</span>
+        <span className="keyrow">
+          <input type={show ? "text" : "password"} value={settings.apiKey} placeholder={info.keyHint} onChange={(e) => (onChange({ ...settings, apiKey: e.target.value.trim() }), setTest(null))} autoComplete="off" spellCheck={false} data-testid="api-key" onKeyDown={(e) => e.stopPropagation()} />
+          <button type="button" className="btn small" onClick={() => setShow(!show)}>
+            {show ? "Hide" : "Show"}
+          </button>
+        </span>
+      </label>
+      {info.keyUrl && (
+        <a className="keylink" href={info.keyUrl} target="_blank" rel="noopener noreferrer">
+          Get a {info.short} key ↗
+        </a>
+      )}
+      <label>
+        Model {info.model && <span className="mut">(default {info.model})</span>}
+        <input value={settings.model} placeholder={info.model || "model name"} onChange={(e) => onChange({ ...settings, model: e.target.value.trim() })} onKeyDown={(e) => e.stopPropagation()} data-testid="model" />
+      </label>
+      {onTest && (
+        <div className="testrow">
+          <button
+            type="button"
+            className="btn small"
+            disabled={test === "testing" || (!settings.apiKey && settings.provider !== "custom")}
+            data-testid="test-connection"
+            onClick={async () => {
+              setTest("testing");
+              const err = await onTest(settings);
+              setTest(err ? { ok: false, msg: err } : { ok: true, msg: "Connected ✓" });
+            }}
+          >
+            {test === "testing" ? "Testing…" : "Test connection"}
+          </button>
+          {test && test !== "testing" && (
+            <span className={test.ok ? "ok" : "bad"} data-testid="test-result">
+              {test.msg}
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function SettingsDialog({
   settings,
   serverClaude,
   onSave,
+  onTest,
   onClose,
 }: {
   settings: Settings;
   serverClaude: boolean;
   onSave: (s: Settings) => void;
+  onTest: (s: Settings) => Promise<string | null>;
   onClose: () => void;
 }) {
   const [s, setS] = useState(settings);
   return (
-    <Modal title="Intelligence" onClose={onClose}>
+    <Modal title="AI (optional)" onClose={onClose}>
       <div className="form">
         <p className="lead">
-          Lumen works with no key at all — the <b>offline engine</b> restructures, clusters, reviews and builds prototypes from what's on your canvas.
-          Connect <b>Claude</b> to generate new content, read sketches, and build bespoke apps.
+          Lumen is fully useful with <b>no AI</b>: the offline engine clusters, structures, reviews and builds prototypes from what's on your canvas. Add a key from any provider to also generate new content, read sketches and build bespoke apps.
         </p>
-        {serverClaude && <p className="ok">✓ This deployment already has Claude enabled for everyone.</p>}
-        <label>
-          Anthropic API key <span className="mut">(stored only in this browser)</span>
-          <input type="password" value={s.apiKey} placeholder="sk-ant-…" onChange={(e) => setS({ ...s, apiKey: e.target.value.trim() })} autoComplete="off" data-testid="api-key" onKeyDown={(e) => e.stopPropagation()} />
-        </label>
-        <label>
-          Model
-          <input value={s.model} placeholder={DEFAULT_MODEL} onChange={(e) => setS({ ...s, model: e.target.value.trim() || DEFAULT_MODEL })} onKeyDown={(e) => e.stopPropagation()} />
-        </label>
+        {serverClaude && <p className="ok">✓ This deployment already provides AI for everyone.</p>}
+        <ProviderSetup settings={s} onChange={setS} onTest={onTest} />
         <label className="check">
           <input type="checkbox" checked={s.mode === "offline"} onChange={(e) => setS({ ...s, mode: e.target.checked ? "offline" : "auto" })} />
           Stay offline — never send anything off this device
@@ -145,6 +209,51 @@ export function SettingsDialog({
             Save
           </button>
         </footer>
+      </div>
+    </Modal>
+  );
+}
+
+/** First-run popup: friendly, skippable, one decision. */
+export function Onboarding({ settings, onSave, onTest, onDone }: { settings: Settings; onSave: (s: Settings) => void; onTest: (s: Settings) => Promise<string | null>; onDone: () => void }) {
+  const [s, setS] = useState(settings);
+  const [open, setOpen] = useState(false);
+  return (
+    <Modal title="Welcome to Lumen" onClose={onDone}>
+      <div className="form" data-testid="onboarding">
+        <p className="lead">
+          A canvas that understands what you draw. <b>Everything works without AI</b> — clustering, flowcharts, mind maps, review, live prototypes, history and sharing.
+        </p>
+        {!open ? (
+          <>
+            <button className="btn primary big" onClick={onDone} data-testid="onboarding-skip">
+              Start drawing
+            </button>
+            <button className="btn" onClick={() => setOpen(true)} data-testid="onboarding-connect">
+              I have an AI key — connect it
+            </button>
+            <p className="mut small">You can add one any time from ✦ in the top right.</p>
+          </>
+        ) : (
+          <>
+            <ProviderSetup settings={s} onChange={setS} onTest={onTest} />
+            <footer>
+              <button className="btn" onClick={onDone}>
+                Skip
+              </button>
+              <button
+                className="btn primary"
+                data-testid="onboarding-save"
+                onClick={() => {
+                  onSave(s);
+                  onDone();
+                }}
+              >
+                Save & start
+              </button>
+            </footer>
+          </>
+        )}
       </div>
     </Modal>
   );

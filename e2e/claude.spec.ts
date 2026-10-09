@@ -67,7 +67,7 @@ test.describe("Claude engine (network mocked at the edge)", () => {
     await page.locator('[data-testid="settings-save"]').click();
     await runPrompt(page, "Draft -> Review -> Publish");
     await expect(page.locator('[data-testid="toast"]')).toContainText("Drew 3 steps");
-    await expect(page.locator('[data-testid="toast"]')).toContainText("Claude unavailable");
+    await expect(page.locator('[data-testid="toast"]')).toContainText("AI unavailable");
   });
 
   test("Claude can edit a selected live object in place", async ({ page }) => {

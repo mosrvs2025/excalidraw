@@ -10,6 +10,7 @@ export interface DockProps {
   placeholder: string;
   busy: string | null;
   engine: "claude" | "offline";
+  engineLabel: string;
   onRun: (prompt: string, intent?: Suggestion["id"]) => void;
   onEngineClick: () => void;
   onCancel: () => void;
@@ -110,8 +111,8 @@ export function Dock(p: DockProps) {
                 if (e.key === "Escape") (e.target as HTMLInputElement).blur();
               }}
             />
-            <button type="button" className={`engine ${p.engine}`} onClick={p.onEngineClick} title={p.engine === "claude" ? "Powered by Claude" : "Offline engine — click to connect Claude"}>
-              {p.engine === "claude" ? "✦ Claude" : "○ Offline"}
+            <button type="button" className={`engine ${p.engine}`} onClick={p.onEngineClick} title={p.engine === "claude" ? `Powered by ${p.engineLabel}` : "Offline engine — click to connect an AI"}>
+              {p.engine === "claude" ? `✦ ${p.engineLabel}` : "○ Offline"}
             </button>
             <button className="send" disabled={!text.trim()} aria-label="Run">
               ↵

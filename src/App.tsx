@@ -20,7 +20,8 @@ import { buildGraph, getMeta, type CanvasGraph } from "./canvas/context";
 import { buildNotes, executePlan, insertSkeleton, LIVE_HOST, uid, type ExecResult } from "./canvas/execute";
 import { runIntent, engineAvailable, serverHasClaude, type EngineKind } from "./ai/engine";
 import { suggestFor, type IntentId, type Suggestion } from "./ai/intents";
-import { loadSettings, saveSettings, type Settings } from "./ai/settings";
+import { loadSettings, markOnboarded, PROVIDERS, saveSettings, wasOnboarded, type Settings } from "./ai/settings";
+import { askProvider } from "./ai/providers";
 import type { Plan } from "./ai/schema";
 import { TEMPLATES } from "./live/templates";
 import { LiveObject, frameRegistry } from "./live/LiveObject";
@@ -43,7 +44,7 @@ import {
 import { BroadcastSync, randomIdentity, type SyncMessage } from "./store/sync";
 import { decodeBoard, encodeBoard, MAX_LINK_CHARS } from "./store/share";
 import { Dock } from "./ui/Dock";
-import { Expanded, HistoryPanel, LiveEditor, ProjectMenu, SettingsDialog, Welcome } from "./ui/Panels";
+import { Expanded, HistoryPanel, LiveEditor, Onboarding, ProjectMenu, SettingsDialog, Welcome } from "./ui/Panels";
 
 const CURRENT_KEY = "lumen:current";
 const isMobile = () => window.innerWidth < 700;
@@ -146,6 +147,7 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
   const [engine, setEngine] = useState<EngineKind>("offline");
   const [serverClaude, setServerClaude] = useState(false);
   const [panel, setPanel] = useState<null | "history" | "settings" | "projects">(null);
+  const [onboard, setOnboard] = useState(() => !wasOnboarded());
   const [versions, setVersions] = useState<Version[]>([]);
   const [editing, setEditing] = useState<null | { id: string; kind: "app" | "doc" }>(null);
   const [expanded, setExpanded] = useState<null | { id: string }>(null);
@@ -190,6 +192,15 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
       localStorage.setItem("lumen:theme", theme);
     } catch {}
   }, [theme]);
+
+  const testConnection = useCallback(async (s: Settings): Promise<string | null> => {
+    try {
+      await askProvider({ prompt: "Add one note that says hello.", graph: buildGraph([], []) }, s, false);
+      return null;
+    } catch (e: any) {
+      return String(e?.message ?? e).slice(0, 160);
+    }
+  }, []);
 
   /* ───────── helpers ───────── */
   const say = useCallback((text: string, opts: { note?: string; undo?: boolean } = {}) => {
@@ -840,6 +851,7 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
         placeholder={placeholder}
         busy={busy}
         engine={engine}
+        engineLabel={settings.apiKey || settings.provider === "custom" ? PROVIDERS[settings.provider].short : "Claude"}
         onRun={run}
         onEngineClick={() => setPanel("settings")}
         onCancel={() => abortRef.current?.abort()}
@@ -860,7 +872,8 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
       )}
 
       {panel === "history" && <HistoryPanel versions={versions} current={api?.getSceneElementsIncludingDeleted() ?? []} onRestore={restore} onSave={async (l) => (await checkpoint(l, "manual"), setVersions(await listVersions(meta.id)), say(`Saved checkpoint “${l}”.`))} onClose={() => setPanel(null)} />}
-      {panel === "settings" && <SettingsDialog settings={settings} serverClaude={serverClaude} onSave={(s) => (saveSettings(s), setSettings(s))} onClose={() => setPanel(null)} />}
+      {panel === "settings" && <SettingsDialog settings={settings} serverClaude={serverClaude} onSave={(s) => (saveSettings(s), setSettings(s))} onTest={testConnection} onClose={() => setPanel(null)} />}
+      {onboard && <Onboarding settings={settings} onSave={(s) => (saveSettings(s), setSettings(s))} onTest={testConnection} onDone={() => (markOnboarded(), setOnboard(false))} />}
       {editing && editingEl && (
         <LiveEditor
           kind={editing.kind}

@@ -162,3 +162,27 @@ describe("free-space placement", () => {
     expect(p.x < 150 && p.x + 200 > -150 && p.y < 100 && p.y + 100 > -100).toBe(false);
   });
 });
+
+import { buildGemini, buildOpenAI, extractJson, parseGemini, parseOpenAI } from "./providers";
+describe("provider adapters", () => {
+  const req = { prompt: "do it", graph: { scope: "canvas", items: [], edges: [], aliasToId: {}, idToAlias: {}, bounds: null } as CanvasGraph, imageBase64: "AAAA" };
+  const input = { say: "ok", ops: [{ op: "notes", items: [{ text: "hi" }] }] };
+  it("OpenAI: forced tool, image as data URL, parses tool_calls", () => {
+    const p = buildOpenAI(req, "gpt-4o", true);
+    expect(p.tool_choice).toEqual({ type: "function", function: { name: "canvas_plan" } });
+    expect(JSON.stringify(p.messages)).toContain("data:image/png;base64,AAAA");
+    expect(parseOpenAI({ choices: [{ message: { tool_calls: [{ function: { name: "canvas_plan", arguments: JSON.stringify(input) } }] } }] }).ops).toHaveLength(1);
+    expect("tool_choice" in buildOpenAI(req, "m", false)).toBe(false);
+  });
+  it("falls back to JSON in plain text (local models)", () => {
+    expect(parseOpenAI({ choices: [{ message: { content: "here you go ```json\n" + JSON.stringify(input) + "\n```" } }] }).say).toBe("ok");
+    expect(extractJson('blah {"a":1} blah')).toEqual({ a: 1 });
+    expect(() => parseOpenAI({ error: { message: "nope" } })).toThrow(/nope/);
+  });
+  it("Gemini: function declarations + inline image, parses functionCall", () => {
+    const p = buildGemini(req);
+    expect(p.tools[0].functionDeclarations[0].name).toBe("canvas_plan");
+    expect(JSON.stringify(p.contents)).toContain("inlineData");
+    expect(parseGemini({ candidates: [{ content: { parts: [{ functionCall: { name: "canvas_plan", args: input } }] } }] }).ops).toHaveLength(1);
+  });
+});

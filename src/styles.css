@@ -219,3 +219,17 @@ button { font-family: inherit; }
   .toast { top: 104px !important; }
   .history { top: auto; height: 62dvh; width: 100vw; border-left: 0; border-top: 1px solid var(--line); border-radius: 18px 18px 0 0; }
 }
+
+/* ── AI setup ── */
+.setup { display: grid; gap: 12px; }
+.providers { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.providers button { all: unset; box-sizing: border-box; text-align: center; cursor: pointer; padding: 9px 4px; border-radius: 10px; border: 1px solid var(--line); font: 600 13px var(--font); color: var(--ink); }
+.providers button:hover { background: var(--acc-soft); }
+.providers button.on { background: var(--acc); border-color: var(--acc); color: var(--acc-ink); }
+.providers button:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+.keyrow { display: flex; gap: 6px; } .keyrow input { flex: 1; }
+.keylink { font-size: 12px; color: var(--acc); text-decoration: none; justify-self: start; margin-top: -6px; }
+.testrow { display: flex; align-items: center; gap: 10px; font-size: 13px; } .testrow .ok { color: #2f9e44; font-weight: 600; margin: 0; } .testrow .bad { color: #e03131; }
+.form .btn.big { padding: 12px 16px; font-size: 15px; text-align: center; }
+.form .btn { text-align: center; } .mut.small { font-size: 12px; margin: 0; }
+.form input[type="text"] { font: 400 14px var(--font); padding: 9px 11px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-solid); color: var(--ink); outline: none; }
