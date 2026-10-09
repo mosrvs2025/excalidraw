@@ -52,10 +52,15 @@ test.describe("live objects", () => {
     await runPrompt(page, "counter");
     await expect(page.locator('[data-testid="action-edit"]')).toBeVisible();
     await page.locator('[data-testid="action-edit"]').click();
-    const src = page.locator('[data-testid="live-source"]');
-    const html = await src.inputValue();
+    await expect(page.locator('[data-testid="live-source"] .cm-content')).toBeVisible(); // CodeMirror
+    const html: string = await page.evaluate(() => (window as any).__lumenEditor.state.doc.toString());
     expect(html).toContain("<script>");
-    await src.fill(html.replace("Reset", "Zero it"));
+    // edit like a user would: through the editor, so the change flows via its update listener
+    await page.evaluate((h) => {
+      const v = (window as any).__lumenEditor;
+      v.dispatch({ changes: { from: 0, to: v.state.doc.length, insert: h.replace("Reset", "Zero it") } });
+    }, html);
+    await expect(page.locator(".editor .preview iframe")).toBeVisible();
     await page.locator('[data-testid="live-save"]').click();
     const frame = page.frameLocator(".lo-body iframe").first();
     await expect(frame.getByRole("button", { name: "Zero it" })).toBeVisible();

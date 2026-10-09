@@ -1,8 +1,10 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { diffScenes, relativeTime, type ProjectMeta, type Version } from "../store/projects";
 import { PROVIDERS, type ProviderId, type Settings } from "../ai/settings";
 import { AppFrame } from "../live/LiveObject";
 import { renderMarkdown } from "../live/runtime";
+
+const CodeEditor = lazy(() => import("./CodeEditor"));
 
 export function Modal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }) {
   useEffect(() => {
@@ -286,7 +288,9 @@ export function LiveEditor({
       <div className="editor">
         <div className="pane">
           <input className="title-in" value={t} onChange={(e) => setT(e.target.value)} onKeyDown={(e) => e.stopPropagation()} aria-label="Title" />
-          <textarea value={src} spellCheck={false} onChange={(e) => setSrc(e.target.value)} onKeyDown={(e) => e.stopPropagation()} data-testid="live-source" />
+          <Suspense fallback={<div className="cm-host mut">Loading editor…</div>}>
+            <CodeEditor value={src} lang={kind === "app" ? "html" : "markdown"} dark={theme === "dark"} onChange={setSrc} />
+          </Suspense>
         </div>
         <div className="pane preview">
           {kind === "app" ? <AppFrame id="preview" html={src} theme={theme} title="Preview" /> : <div className="lo-md" dangerouslySetInnerHTML={{ __html: renderMarkdown(src) }} />}

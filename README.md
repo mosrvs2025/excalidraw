@@ -29,6 +29,8 @@ It works **with no API key**. Add one (or deploy with a server key) and Claude t
 | **Mermaid in, native shapes out** | Paste/type Mermaid (or have a text block on the canvas offer *Draw this diagram*). Flowcharts are parsed natively into editable Lumen diagrams; sequence/class/ER/gantt use `@excalidraw/mermaid-to-excalidraw` (lazy-loaded). |
 | **On-device OCR** | *Read text* on any image/sketch uses Tesseract (WASM, self-hosted, no network, no key) and drops the text on the canvas as a note you can then structure, cluster or mind-map. |
 | **Live rooms across devices** | *Share live…* gives a private room link; a tiny stateless relay (`server/relay.mjs`) forwards messages, and merging stays client-side via Excalidraw's `reconcileElements`. Same-browser tabs sync with no server. |
+| **Installable & offline** | A PWA: install it from the browser, and after one visit the whole app (and anything you've used, e.g. OCR or Mermaid) works with no connection. |
+| **Real code editor** | Live objects and documents open in CodeMirror 6 (syntax highlighting, dark mode) with a live preview. |
 | **Collab-ready architecture** | A `SyncAdapter` interface. Today's adapter is `BroadcastChannel`: live multi-tab collaboration with presence and cursors, using Excalidraw's `reconcileElements` for conflict-free merges. A WebSocket / Yjs adapter is a drop-in (`src/store/sync.ts`). |
 
 ---
@@ -126,7 +128,7 @@ Phone (390px): ![Mobile](docs/screenshots/13-mobile-clustered.png)
 
 ```
 npm test            # 38 unit tests (+ relay): planner, clustering, review, layout, placement, markdown, share links, schema sanitising, store, proxy, Claude payload
-npm run e2e         # Playwright (builds, serves, drives real Chromium): see e2e/*.spec.ts
+npm run e2e         # 36 Playwright tests (builds, serves, drives real Chromium): see e2e/*.spec.ts
 ```
 
 The e2e suite exercises real pointer drawing, every intent chip, undo, animated clustering, live-object interaction **inside the sandboxed iframe** (state round-trips into the element), sandbox isolation, reload persistence, version restore, multi-project switching, two-tab collaboration, a 390px touch viewport, and the Claude paths with the network mocked at the edge (BYO key payload incl. selection image, hosted proxy, graceful fallback, in-place app editing).
