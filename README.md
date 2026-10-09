@@ -24,6 +24,7 @@ It works **with no API key**. Add one (or deploy with a server key) and Claude t
 | **Claude when you want it** | One tool-call contract (`canvas_plan`). Claude receives a *semantic* description of the canvas (items, text, positions, connections) **plus an image of the selection**, so it can read sketches and handwriting and build a bespoke working app from them. |
 | **Safe by construction** | Model output is coerced through `sanitizePlan` into well-formed ops (unknown ops, dangling edges, oversize payloads dropped); apps run in an opaque-origin sandbox; the hosted proxy pins the model, caps tokens, whitelists fields and rate-limits. If Claude fails, the offline engine still answers. |
 | **Never lose work** | Local-first projects (IndexedDB), autosave, multiple boards, and **version history** — Lumen checkpoints *before every AI action*, plus manual named checkpoints, with per-version diffs (`+3 −1 ~2`) and one-click restore (itself undoable). |
+| **Serverless sharing** | *Copy share link* packs the whole board into the URL fragment (gzip + base64url). The fragment never reaches a server; opening it imports the board as a new local project — on any device. |
 | **Collab-ready architecture** | A `SyncAdapter` interface. Today's adapter is `BroadcastChannel`: live multi-tab collaboration with presence and cursors, using Excalidraw's `reconcileElements` for conflict-free merges. A WebSocket / Yjs adapter is a drop-in (`src/store/sync.ts`). |
 
 ---
@@ -56,6 +57,7 @@ src/
     context.ts     elements → semantic graph (notes/shapes/edges), outline parsing, graph review
     layout.ts      dagre flow/tree + custom mind-map layout, text measurement
     execute.ts     Plan → elements; animated moves; arrow re-routing; bound-text carrying
+    placement.ts   find free space for new content
     palette.ts
   live/
     runtime.ts     sandbox document composer, state bridge, safe Markdown
@@ -63,6 +65,7 @@ src/
     LiveObject.tsx renderEmbeddable target + registry that routes iframe saves to elements
   store/
     projects.ts    IndexedDB projects, versions, diffs, autosave
+    share.ts       board ⇄ URL-fragment links (gzip + base64url)
     sync.ts        SyncAdapter + BroadcastChannel implementation
   ui/              Dock, panels (history, settings, code editor, project menu, welcome)
   App.tsx          workspace orchestration
@@ -98,10 +101,20 @@ Set `ANTHROPIC_API_KEY` in the project's environment variables to enable the hos
 
 ---
 
+## Screenshots (captured by the e2e suite)
+
+| | |
+| --- | --- |
+| ![Clustered](docs/screenshots/02-clustered.png) | ![Find gaps](docs/screenshots/05-find-gaps.png) |
+| ![Flow runner](docs/screenshots/06-flow-runner.png) | ![Doc card](docs/screenshots/08-doc-card.png) |
+| ![History](docs/screenshots/09-history.png) | ![Mind map](docs/screenshots/15-mindmap.png) |
+
+Phone (390px): ![Mobile](docs/screenshots/13-mobile-clustered.png)
+
 ## Tests
 
 ```
-npm test            # 25 unit tests: planner, clustering, review, layout, schema sanitising, store, proxy, Claude payload
+npm test            # 30 unit tests: planner, clustering, review, layout, placement, markdown, share links, schema sanitising, store, proxy, Claude payload
 npm run e2e         # Playwright (builds, serves, drives real Chromium): see e2e/*.spec.ts
 ```
 

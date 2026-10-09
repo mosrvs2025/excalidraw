@@ -27,6 +27,7 @@ test.describe("Claude engine (network mocked at the edge)", () => {
     await expect(page.locator(".engine")).toContainText("Claude");
     // something to look at, then ask in plain language
     await page.locator('[data-testid="starter-outline"]').click();
+    await expect(page.locator('[data-testid="intent-flow"]')).toBeVisible(); // selection established
     await runPrompt(page, "make a launch plan out of this and tell me what's risky");
     await expect(page.locator('[data-testid="toast"]')).toContainText("Mapped your launch plan.");
     expect(headers["x-api-key"]).toBe("sk-ant-test");

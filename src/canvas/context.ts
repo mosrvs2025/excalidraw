@@ -123,12 +123,13 @@ export function buildGraph(
     const meta = getMeta(e);
     switch (e.type) {
       case "text":
-        addItem(e, "text", e.text);
+        addItem(e, "text", e.originalText ?? e.text);
         break;
       case "rectangle":
       case "ellipse":
       case "diamond": {
-        const t = boundTextOf(e)?.text ?? "";
+        const bt = boundTextOf(e);
+        const t = bt?.originalText ?? bt?.text ?? "";
         const hasArrow = e.boundElements?.some((b) => b.type === "arrow");
         const kind: ItemKind =
           meta?.kind === "flag"
@@ -166,7 +167,7 @@ export function buildGraph(
     const from = a.startBinding?.elementId && idToAlias[a.startBinding.elementId];
     const to = a.endBinding?.elementId && idToAlias[a.endBinding.elementId];
     if (from && to && from !== to)
-      edges.push({ from, to, label: boundTextOf(e)?.text || undefined, id: e.id });
+      edges.push({ from, to, label: boundTextOf(e)?.originalText || boundTextOf(e)?.text || undefined, id: e.id });
   }
 
   let bounds: CanvasGraph["bounds"] = null;

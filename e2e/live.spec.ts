@@ -69,8 +69,8 @@ test.describe("live objects", () => {
     await page.locator('[data-testid="intent-doc"]').click();
     await expect(page.locator('[data-testid="toast"]')).toContainText("document");
     expect(await count(page, "doc")).toBe(1);
-    await expect(page.locator(".lo-doc h1")).toBeVisible();
-    await expect(page.locator(".lo-doc ol li").first()).toBeVisible();
+    await expect(page.locator(".lo-md h1")).toBeVisible();
+    await expect(page.locator(".lo-md ol li").first()).toBeVisible();
     await page.locator('[data-testid="action-dup"]').click();
     expect(await count(page, "doc")).toBe(2);
     await shot(page, "08-doc-card");

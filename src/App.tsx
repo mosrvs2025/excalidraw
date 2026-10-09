@@ -41,6 +41,7 @@ import {
   type Version,
 } from "./store/projects";
 import { BroadcastSync, randomIdentity, type SyncMessage } from "./store/sync";
+import { decodeBoard, encodeBoard, MAX_LINK_CHARS } from "./store/share";
 import { Dock } from "./ui/Dock";
 import { Expanded, HistoryPanel, LiveEditor, ProjectMenu, SettingsDialog, Welcome } from "./ui/Panels";
 
@@ -64,6 +65,15 @@ export default function App() {
   useEffect(() => {
     (async () => {
       let projects = await listProjects();
+      // a shared link opens as its own project (the fragment never leaves the browser)
+      const shared = await decodeBoard(location.hash);
+      if (shared) {
+        const p = await createProject(shared.name, { elements: shared.elements, files: {} });
+        history.replaceState(null, "", location.pathname + location.search);
+        projects = await listProjects();
+        await open(p.id, projects);
+        return;
+      }
       if (!projects.length) projects = [await createProject("My first board")];
       let id = "";
       try {
@@ -600,6 +610,19 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
     say(`Restored “${v.label}”.`, { undo: true });
   };
 
+  const shareLink = async () => {
+    const a = apiRef.current;
+    if (!a) return;
+    const link = location.origin + location.pathname + (await encodeBoard(a.getSceneElementsIncludingDeleted(), name));
+    if (link.length > MAX_LINK_CHARS) return say("Too big for a link.", { note: "Export the file instead (menu → Export)." });
+    try {
+      await navigator.clipboard.writeText(link);
+      say("Share link copied.", { note: "Anyone with it gets their own copy — the board is inside the link, not on a server." });
+    } catch {
+      window.prompt("Copy this link", link);
+    }
+  };
+
   /* ───────── starters ───────── */
   const starter = (kind: "braindump" | "flow" | "outline" | "timer") => {
     const a = apiRef.current;
@@ -752,6 +775,9 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
           <MainMenu.Item onSelect={() => setPanel("projects")}>Projects…</MainMenu.Item>
           <MainMenu.Item onSelect={onNew}>New project</MainMenu.Item>
           <MainMenu.Item onSelect={openHistory}>Version history</MainMenu.Item>
+          <MainMenu.Item onSelect={shareLink} data-testid="share-link">
+            Copy share link
+          </MainMenu.Item>
           <MainMenu.Item onSelect={() => setPanel("settings")}>Intelligence settings</MainMenu.Item>
           <MainMenu.Separator />
           <MainMenu.DefaultItems.LoadScene />

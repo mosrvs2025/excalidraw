@@ -5,6 +5,7 @@ import { sanitizePlan } from "./schema";
 import { suggestFor } from "./intents";
 import { layoutGraph } from "../canvas/layout";
 import { renderMarkdown } from "../live/runtime";
+import { findFreeSpot } from "../canvas/placement";
 
 const item = (alias: string, text: string, extra: Partial<CanvasItem> = {}): CanvasItem => ({
   alias, id: alias, kind: "note", text, x: 0, y: 0, w: 180, h: 120, selected: true, ...extra,
@@ -135,11 +136,29 @@ describe("suggestions + layout + markdown", () => {
     expect(pos.get("a")!.x).toBeGreaterThan(pos.get("root")!.x);
     expect(pos.get("a1")!.x).toBeGreaterThan(pos.get("a")!.x);
   });
+  it("nests markdown lists so numbering continues", () => {
+    const html = renderMarkdown("1. **A**\n   - then B\n2. **B**\n   - then C\n3. **C**");
+    expect((html.match(/<ol>/g) ?? []).length).toBe(1);
+    expect(html).toContain("<ul>");
+    expect(html.indexOf("then B")).toBeLessThan(html.indexOf("<strong>B"));
+  });
   it("escapes html in markdown", () => {
     expect(renderMarkdown("# Hi <script>alert(1)</script>")).not.toContain("<script>");
     expect(renderMarkdown("- [x] done")).toContain("checked");
   });
   it("buildGraph is exported and handles empty", () => {
     expect(buildGraph([], []).items).toEqual([]);
+  });
+});
+
+describe("free-space placement", () => {
+  const box = (x: number, y: number, w: number, h: number) => ({ id: `${x}${y}`, x, y, width: w, height: h, isDeleted: false }) as any;
+  it("uses the centre when free, steps aside when occupied", () => {
+    expect(findFreeSpot([], 200, 100, 0, 0)).toEqual({ x: -100, y: -50 });
+    const taken = [box(-150, -100, 300, 200)];
+    const p = findFreeSpot(taken, 200, 100, 0, 0);
+    expect(p.x).toBeGreaterThanOrEqual(150);
+    // no overlap with the occupied area
+    expect(p.x < 150 && p.x + 200 > -150 && p.y < 100 && p.y + 100 > -100).toBe(false);
   });
 });

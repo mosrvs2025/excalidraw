@@ -82,6 +82,28 @@ test.describe("collaboration architecture", () => {
   });
 });
 
+test.describe("sharing", () => {
+  test("share link: the board travels inside the URL and opens as a project in another browser", async ({ browser }) => {
+    const a = await (await browser.newContext({ permissions: ["clipboard-read", "clipboard-write"] })).newPage();
+    await openApp(a);
+    await runPrompt(a, "kanban");
+    await expect(a.locator('[data-testid="toast"]')).toBeVisible();
+    await a.waitForTimeout(500);
+    await a.locator('[data-testid="main-menu-trigger"]').click();
+    await a.getByText("Copy share link").click();
+    await expect(a.locator('[data-testid="toast"]')).toContainText("Share link copied");
+    const link = await a.evaluate(() => navigator.clipboard.readText());
+    expect(link).toContain("#board=");
+    // a completely separate browser profile (no shared storage) opens it
+    const b = await (await browser.newContext()).newPage();
+    await openApp(b, link);
+    await expect.poll(() => count(b, "lane")).toBe(3);
+    expect(await b.evaluate(() => location.hash)).toBe(""); // fragment consumed
+    await expect(b.locator('[data-testid="project-name"]')).toContainText("My first board");
+    await shot(b, "16-shared-board");
+  });
+});
+
 test.describe("responsive", () => {
   test.use({ viewport: { width: 390, height: 780 }, hasTouch: true, isMobile: true });
   test("phone layout: dock sits above the toolbar, nothing overflows", async ({ page }) => {

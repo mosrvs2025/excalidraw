@@ -197,20 +197,19 @@ button { font-family: inherit; }
 .lo { width: 100%; height: 100%; display: flex; flex-direction: column; background: var(--surface-solid); border-radius: 12px; overflow: hidden; font-family: var(--font); }
 .lo-bar { flex: none; height: 30px; display: flex; align-items: center; gap: 8px; padding: 0 12px; border-bottom: 1px solid var(--line); color: var(--ink); background: var(--acc-soft); }
 .lo-dot { width: 8px; height: 8px; border-radius: 50%; background: #40c057; box-shadow: 0 0 8px #40c057; }
-.lo-doc ~ * { display: none; }
-.lo-doc .lo-dot, .lo-doc + .lo-dot { background: var(--acc); }
+.lo-kind-doc .lo-dot { background: var(--acc); box-shadow: 0 0 8px var(--acc); }
 .lo-title { font: 600 12px var(--font); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .lo-tag { font: 700 9px var(--font); text-transform: uppercase; letter-spacing: 0.08em; color: var(--acc); }
 .lo-body { flex: 1; min-height: 0; position: relative; }
 .lo-body iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: transparent; }
-.lo-doc { position: absolute; inset: 0; overflow: auto; padding: 16px 20px; font: 400 15px/1.6 var(--font); color: var(--ink); background: var(--surface-solid); }
-.lo-doc h1 { font-size: 22px; margin: 0 0 10px; } .lo-doc h2 { font-size: 18px; margin: 18px 0 6px; } .lo-doc h3 { font-size: 15px; }
-.lo-doc p { margin: 0 0 10px; } .lo-doc ul, .lo-doc ol { padding-left: 22px; margin: 0 0 10px; } .lo-doc li { margin: 3px 0; }
-.lo-doc code { background: var(--acc-soft); padding: 1px 5px; border-radius: 5px; font-size: 13px; }
-.lo-doc pre { background: var(--acc-soft); padding: 10px; border-radius: 8px; overflow: auto; }
-.lo-doc blockquote { margin: 0 0 10px; padding-left: 12px; border-left: 3px solid var(--acc); color: var(--mut); }
-.lo-doc a { color: var(--acc); }
-.editor .lo-doc { position: static; }
+.lo-md { position: absolute; inset: 0; overflow: auto; padding: 16px 20px; font: 400 15px/1.6 var(--font); color: var(--ink); background: var(--surface-solid); }
+.lo-md h1 { font-size: 22px; margin: 0 0 10px; } .lo-md h2 { font-size: 18px; margin: 18px 0 6px; } .lo-md h3 { font-size: 15px; }
+.lo-md p { margin: 0 0 10px; } .lo-md ul, .lo-md ol { padding-left: 22px; margin: 0 0 10px; } .lo-md li { margin: 3px 0; }
+.lo-md code { background: var(--acc-soft); padding: 1px 5px; border-radius: 5px; font-size: 13px; }
+.lo-md pre { background: var(--acc-soft); padding: 10px; border-radius: 8px; overflow: auto; }
+.lo-md blockquote { margin: 0 0 10px; padding-left: 12px; border-left: 3px solid var(--acc); color: var(--mut); }
+.lo-md a { color: var(--acc); }
+.editor .lo-md { position: static; }
 .excalidraw .excalidraw__embeddable__outer { border-radius: 12px; overflow: hidden; }
 .excalidraw__embeddable-hint { z-index: 3; }
 

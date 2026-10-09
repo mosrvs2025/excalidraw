@@ -18,6 +18,7 @@ import {
   type LNode,
 } from "./layout";
 import { BRANCH_CYCLE, PALETTE } from "./palette";
+import { findFreeSpot } from "./placement";
 
 /* Fonts: 5 = Excalifont (hand), 6 = Nunito (clean) */
 const FONT_HAND = 5;
@@ -60,8 +61,8 @@ export function buildDiagram(
     let w = Math.max(128, m.w + 44);
     let h = Math.max(56, m.h + 30);
     if (shape === "diamond") {
-      w = Math.max(160, m.w * 1.55 + 40);
-      h = Math.max(96, m.h * 1.9 + 36);
+      w = Math.max(180, m.w * 2 + 36);
+      h = Math.max(104, m.h * 2 + 40);
     } else if (shape === "ellipse") {
       w = Math.max(140, m.w * 1.3 + 40);
       h = Math.max(72, m.h * 1.5 + 30);
@@ -499,10 +500,10 @@ export async function executePlan(
     flagged: 0,
     cursor: { ...opts.anchor },
   };
-  // for centre anchors we need op size before choosing origin
+  // for centre anchors we need op size before choosing origin — and must not land on top of existing work
   const originFor = (w: number, h: number) =>
     opts.anchorMode === "center"
-      ? { x: ctx.cursor.x - w / 2, y: ctx.cursor.y - h / 2 }
+      ? findFreeSpot(ctx.els, w, h, ctx.cursor.x, ctx.cursor.y)
       : { x: ctx.cursor.x, y: ctx.cursor.y };
 
   const place = (build: (ox: number, oy: number) => Placed, measure: (() => { w: number; h: number })) => {
@@ -511,7 +512,7 @@ export async function executePlan(
     const o = originFor(m.w, m.h);
     const placed = build(o.x, o.y);
     addSkeleton(ctx, placed);
-    if (opts.anchorMode === "center") ctx.cursor.y += placed.h + 90;
+    if (opts.anchorMode === "center") ctx.cursor.y = o.y + placed.h + 90 + m.h / 2; // next op centres below this one
     else setDims(ctx, placed);
     return placed;
   };

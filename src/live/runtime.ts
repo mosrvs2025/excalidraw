@@ -57,15 +57,18 @@ function inline(s: string) {
 export function renderMarkdown(md: string): string {
   const lines = md.replace(/\r/g, "").split("\n");
   const out: string[] = [];
-  let list: "ul" | "ol" | null = null;
+  // open lists, innermost last; each remembers its indent so nesting follows the source
+  const stack: { type: "ul" | "ol"; indent: number }[] = [];
   let code = false;
-  const close = () => {
-    if (list) out.push(`</${list}>`);
-    list = null;
+  const closeTo = (indent: number) => {
+    while (stack.length && stack[stack.length - 1].indent > indent) {
+      out.push(`</li></${stack.pop()!.type}>`);
+    }
   };
+  const closeAll = () => closeTo(-1);
   for (const raw of lines) {
     if (raw.trim().startsWith("```")) {
-      close();
+      closeAll();
       out.push(code ? "</pre>" : "<pre>");
       code = !code;
       continue;
@@ -75,37 +78,37 @@ export function renderMarkdown(md: string): string {
       continue;
     }
     const h = raw.match(/^(#{1,4})\s+(.*)$/);
-    const ul = raw.match(/^\s*[-*]\s+(\[[ xX]\]\s+)?(.*)$/);
-    const ol = raw.match(/^\s*\d+[.)]\s+(.*)$/);
+    const item = raw.match(/^(\s*)([-*]|\d+[.)])\s+(\[[ xX]\]\s+)?(.*)$/);
     if (h) {
-      close();
+      closeAll();
       out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`);
-    } else if (ul) {
-      if (list !== "ul") {
-        close();
-        out.push("<ul>");
-        list = "ul";
+    } else if (item) {
+      const indent = item[1].replace(/\t/g, "  ").length;
+      const type = /\d/.test(item[2]) ? "ol" : "ul";
+      closeTo(indent);
+      const top = stack[stack.length - 1];
+      if (top && top.indent === indent) {
+        if (top.type !== type) {
+          out.push(`</li></${top.type}><${type}>`);
+          top.type = type;
+        } else out.push("</li>");
+      } else {
+        out.push(`<${type}>`);
+        stack.push({ type, indent });
       }
-      const box = ul[1] ? `<input type="checkbox" disabled ${/x/i.test(ul[1]) ? "checked" : ""}> ` : "";
-      out.push(`<li>${box}${inline(ul[2])}</li>`);
-    } else if (ol) {
-      if (list !== "ol") {
-        close();
-        out.push("<ol>");
-        list = "ol";
-      }
-      out.push(`<li>${inline(ol[1])}</li>`);
+      const box = item[3] ? `<input type="checkbox" disabled ${/x/i.test(item[3]) ? "checked" : ""}> ` : "";
+      out.push(`<li>${box}${inline(item[4])}`);
     } else if (/^>\s?/.test(raw)) {
-      close();
+      closeAll();
       out.push(`<blockquote>${inline(raw.replace(/^>\s?/, ""))}</blockquote>`);
     } else if (!raw.trim()) {
-      close();
+      // blank lines don't end a list that continues after them
     } else {
-      close();
+      closeAll();
       out.push(`<p>${inline(raw)}</p>`);
     }
   }
-  close();
+  closeAll();
   if (code) out.push("</pre>");
   return out.join("\n");
 }

@@ -176,7 +176,7 @@ export function LiveEditor({
           <textarea value={src} spellCheck={false} onChange={(e) => setSrc(e.target.value)} onKeyDown={(e) => e.stopPropagation()} data-testid="live-source" />
         </div>
         <div className="pane preview">
-          {kind === "app" ? <AppFrame id="preview" html={src} theme={theme} title="Preview" /> : <div className="lo-doc" dangerouslySetInnerHTML={{ __html: renderMarkdown(src) }} />}
+          {kind === "app" ? <AppFrame id="preview" html={src} theme={theme} title="Preview" /> : <div className="lo-md" dangerouslySetInnerHTML={{ __html: renderMarkdown(src) }} />}
         </div>
       </div>
       <footer className="form-foot">

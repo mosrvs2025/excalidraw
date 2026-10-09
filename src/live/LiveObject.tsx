@@ -10,7 +10,7 @@ export function LiveObject({ element, theme }: { element: ExcalidrawEmbeddableEl
   const meta = getMeta(element);
   if (!meta) return null;
   return (
-    <div className={`lo lo-${meta.kind}`}>
+    <div className={`lo lo-kind-${meta.kind}`}>
       <div className="lo-bar">
         <span className="lo-dot" />
         <span className="lo-title">{meta.title || (meta.kind === "app" ? "Live object" : "Document")}</span>
@@ -20,7 +20,7 @@ export function LiveObject({ element, theme }: { element: ExcalidrawEmbeddableEl
         {meta.kind === "app" ? (
           <AppFrame id={element.id} html={meta.html ?? ""} state={(meta as any).state} theme={theme} />
         ) : (
-          <div className="lo-doc" dangerouslySetInnerHTML={{ __html: renderMarkdown(meta.markdown ?? "") }} />
+          <div className="lo-md" dangerouslySetInnerHTML={{ __html: renderMarkdown(meta.markdown ?? "") }} />
         )}
       </div>
     </div>
