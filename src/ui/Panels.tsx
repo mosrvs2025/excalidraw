@@ -469,3 +469,48 @@ export function TemplateGallery({ templates, onPick, onClose }: { templates: { i
     </Modal>
   );
 }
+
+/* ───────── connect an AI agent (MCP) ───────── */
+
+export function AgentDialog({ relay, room, onClose }: { relay: string; room: string; onClose: () => void }) {
+  const config = JSON.stringify(
+    { mcpServers: { lumen: { command: "node", args: ["/path/to/lumen/server/mcp.mjs"], env: { LUMEN_RELAY: relay, LUMEN_ROOM: room } } } },
+    null,
+    2,
+  );
+  const [copied, setCopied] = useState(false);
+  return (
+    <Modal title="Connect an AI agent" onClose={onClose} wide>
+      <div className="form" data-testid="agent-dialog">
+        <p className="lead">
+          Any MCP-capable agent — <b>Claude Desktop, Cursor, Claude Code</b> — can read this board and add to it live, as another collaborator. Everything it does is undoable and checkpointed. Keep this board open in a browser: that's where the canvas is drawn.
+        </p>
+        <ol className="steps">
+          <li>
+            Add this to your agent's MCP config (adjust the path to where Lumen's <code>server/</code> folder lives):
+          </li>
+        </ol>
+        <pre className="code" data-testid="agent-config">{config}</pre>
+        <p className="mut small">
+          Tools it gets: <code>read_board</code>, <code>add_notes</code>, <code>add_diagram</code>, <code>add_mermaid</code>, <code>add_data</code>, <code>add_doc</code>, <code>add_app</code>, <code>apply_plan</code>. The room link is a secret — anyone with it can edit.
+        </p>
+        <footer>
+          <button className="btn" onClick={onClose}>
+            Close
+          </button>
+          <button
+            className="btn primary"
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(config);
+                setCopied(true);
+              } catch {}
+            }}
+          >
+            {copied ? "Copied ✓" : "Copy config"}
+          </button>
+        </footer>
+      </div>
+    </Modal>
+  );
+}

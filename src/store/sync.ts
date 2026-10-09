@@ -7,7 +7,9 @@
  * interface for cross-device rooms without touching the canvas, store, or AI code.
  */
 export type SyncMessage =
-  | { t: "hello"; from: string; name: string; color: string }
+  | { t: "hello"; from: string; name: string; color: string; agent?: boolean }
+  | { t: "plan"; from: string; id: string; plan: unknown }
+  | { t: "plan-result"; from: string; id: string; ok: boolean; message: string }
   | { t: "scene"; from: string; elements: any[] }
   | { t: "pointer"; from: string; x: number; y: number; tool: string; name: string; color: string }
   | { t: "leave"; from: string };

@@ -30,7 +30,7 @@ export default defineConfig(({ mode }) => ({
   build: { chunkSizeWarningLimit: 4000, sourcemap: false },
   test: {
     environment: "jsdom",
-    include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    include: ["src/**/*.test.ts", "src/**/*.test.tsx", "server/**/*.test.ts"],
     setupFiles: ["src/test-setup.ts"],
   },
 }));

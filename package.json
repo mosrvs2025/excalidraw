@@ -22,13 +22,15 @@
     "@dagrejs/dagre": "^3.1.1",
     "@excalidraw/excalidraw": "^0.18.1",
     "@excalidraw/mermaid-to-excalidraw": "^2.2.2",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@tesseract.js-data/eng": "^1.0.0",
     "codemirror": "^6.0.2",
     "idb-keyval": "^6.3.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tesseract.js": "^7.0.0",
-    "ws": "^8.22.0"
+    "ws": "^8.22.0",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.0",

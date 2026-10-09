@@ -23,7 +23,7 @@ import { runIntent, engineAvailable, serverHasClaude, type EngineKind } from "./
 import { suggestFor, type IntentId, type Suggestion } from "./ai/intents";
 import { loadSettings, markOnboarded, PROVIDERS, saveSettings, wasOnboarded, type Settings } from "./ai/settings";
 import { askProvider } from "./ai/providers";
-import type { Plan } from "./ai/schema";
+import { sanitizePlan, type Plan } from "./ai/schema";
 import { TEMPLATES } from "./live/templates";
 import { LiveObject, frameRegistry } from "./live/LiveObject";
 import { composeApp } from "./live/runtime";
@@ -49,7 +49,7 @@ import { exportJsonCanvas, importJsonCanvas } from "./canvas/jsoncanvas";
 import { docFromGraph } from "./ai/local";
 import { downloadText, slugify } from "./store/download";
 import { Dock } from "./ui/Dock";
-import { CommandPalette, Expanded, HistoryPanel, LiveEditor, Onboarding, ProjectMenu, SettingsDialog, TemplateGallery, Welcome, type Command } from "./ui/Panels";
+import { AgentDialog, CommandPalette, Expanded, HistoryPanel, LiveEditor, Onboarding, ProjectMenu, SettingsDialog, TemplateGallery, Welcome, type Command } from "./ui/Panels";
 import { TEMPLATES_LIST } from "./ai/local";
 
 const CURRENT_KEY = "lumen:current";
@@ -167,6 +167,7 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
   const [room, setRoomState] = useState<string | null>(() => roomOf(meta.id));
   const [link, setLink] = useState<"connecting" | "open" | "closed">("closed");
   const [palette, setPalette] = useState(false);
+  const [agentDlg, setAgentDlg] = useState(false);
   const [gallery, setGallery] = useState(false);
   const [slide, setSlide] = useState<number | null>(null);
   const [onboard, setOnboard] = useState(() => !wasOnboarded());
@@ -192,6 +193,9 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
   const toastId = useRef(0);
+  const agentRef = useRef<(id: string, plan: unknown, sync: SyncAdapter) => Promise<void>>(async () => {});
+  const runAgentPlan = (id: string, plan: unknown, sync: SyncAdapter) => agentRef.current(id, plan, sync);
+
 
   /* ───────── engine probing ───────── */
   useEffect(() => {
@@ -225,6 +229,26 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
   }, []);
 
   /* ───────── helpers ───────── */
+  agentRef.current = async (id, raw, sync) => {
+    const a = apiRef.current;
+    const reply = (ok: boolean, message: string) => sync.publish({ t: "plan-result", from: sync.id, id, ok, message });
+    if (!a) return reply(false, "Board not ready");
+    try {
+      const plan = sanitizePlan(raw);
+      if (!plan.ops.length) return reply(false, "The plan had no valid operations.");
+      await checkpoint(`Before agent: ${plan.say.slice(0, 40)}`, "ai");
+      const graph = buildGraph(a.getSceneElements(), []);
+      const s = a.getAppState();
+      const c = viewportCoordsToSceneCoords({ clientX: s.offsetLeft + s.width / 2, clientY: s.offsetTop + s.height / 2 }, s);
+      const res = await executePlan(a, plan, { graph, anchor: c, anchorMode: "center" });
+      const made = a.getSceneElements().filter((e) => res.created.includes(e.id));
+      reveal(a, made);
+      say(`🤖 ${plan.say || "Agent made a change."}`, { undo: true });
+      reply(true, `Created ${res.created.length} element(s)${res.touched.length ? `, changed ${res.touched.length}` : ""}.`);
+    } catch (e: any) {
+      reply(false, String(e?.message ?? e).slice(0, 200));
+    }
+  };
   const say = useCallback((text: string, opts: { note?: string; undo?: boolean } = {}) => {
     const id = ++toastId.current;
     setToast({ text, ...opts, id });
@@ -288,7 +312,7 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
   const sentVersions = useRef(new Map<string, number>());
   const sentFiles = useRef(new Set<string>());
   const identity = useRef(randomIdentity()).current;
-  const peerMap = useRef(new Map<string, { name: string; color: string; ts: number }>());
+  const peerMap = useRef(new Map<string, { name: string; color: string; ts: number; agent?: boolean }>());
   const collaborators = useRef(new Map<SocketId, Collaborator>());
   const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -326,7 +350,7 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
     sync.start((m: SyncMessage & { files?: any[] }) => {
       if (m.t === "hello") {
         const isNew = !peerMap.current.has(m.from);
-        peerMap.current.set(m.from, { name: m.name, color: m.color, ts: Date.now() });
+        peerMap.current.set(m.from, { name: m.name, color: m.color, ts: Date.now(), agent: m.agent });
         if (isNew) {
           hello();
           // let a newcomer catch up: resend everything once
@@ -348,6 +372,10 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
           color: { background: m.color, stroke: m.color },
         } as Collaborator);
         api.updateScene({ collaborators: new Map(collaborators.current) });
+      } else if (m.t === "plan") {
+        // An agent (MCP) asked for a change. Exactly one open browser applies it: the lowest id among humans.
+        const humans = [sync.id, ...[...peerMap.current].filter(([, p]) => !p.agent).map(([id]) => id)].sort();
+        if (humans[0] === sync.id) void runAgentPlan(m.id, m.plan, sync);
       } else if (m.t === "leave") {
         peerMap.current.delete(m.from);
         collaborators.current.delete(m.from as SocketId);
@@ -696,6 +724,18 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
       window.prompt("Copy this live link", url);
     }
   };
+  const connectAgent = async () => {
+    if (!settingsRef.current.collabUrl) {
+      say("Agents connect through a live room.", { note: "Add your relay address in ✦ settings first (server/relay.mjs)." });
+      return setPanel("settings");
+    }
+    if (!room) {
+      const id = newRoomId();
+      setRoom(meta.id, id);
+      setRoomState(id);
+    }
+    setAgentDlg(true);
+  };
   const leaveLive = () => {
     setRoom(meta.id, null);
     setRoomState(null);
@@ -850,6 +890,7 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
     { id: "history", label: "Version history", keywords: "restore undo checkpoint", run: openHistory },
     { id: "share", label: "Copy share link", hint: "board in the URL", keywords: "share export link", run: shareLink },
     { id: "live", label: room ? "Stop live sharing" : "Share live…", keywords: "collaborate realtime room", run: room ? leaveLive : shareLive },
+    { id: "agent", label: "Connect an AI agent…", hint: "Claude Desktop, Cursor (MCP)", keywords: "mcp agent claude cursor", run: connectAgent },
     { id: "data", label: "Add data (CSV / JSON)…", keywords: "chart table csv", run: pickDataFile },
     { id: "md", label: "Export as Markdown", run: exportMarkdown },
     { id: "jc", label: "Export as JSON Canvas", hint: "Obsidian", run: exportJsonCanvasFile },
@@ -1027,6 +1068,9 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
             Templates…
           </MainMenu.Item>
           <MainMenu.Item onSelect={() => setPalette(true)}>Command palette (⌘K)</MainMenu.Item>
+          <MainMenu.Item onSelect={connectAgent} data-testid="connect-agent">
+            Connect an AI agent…
+          </MainMenu.Item>
           <MainMenu.Item onSelect={present} data-testid="present">
             Present
           </MainMenu.Item>
@@ -1145,6 +1189,7 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
         </div>
       )}
 
+      {agentDlg && room && <AgentDialog relay={settings.collabUrl} room={room} onClose={() => setAgentDlg(false)} />}
       {palette && <CommandPalette commands={commands} onAsk={(t) => run(t)} onClose={() => setPalette(false)} />}
       {gallery && <TemplateGallery templates={TEMPLATES_LIST} onPick={useTemplate} onClose={() => setGallery(false)} />}
       {panel === "history" && <HistoryPanel versions={versions} current={api?.getSceneElementsIncludingDeleted() ?? []} onRestore={restore} onSave={async (l) => (await checkpoint(l, "manual"), setVersions(await listVersions(meta.id)), say(`Saved checkpoint “${l}”.`))} onClose={() => setPanel(null)} />}
