@@ -1,0 +1,36 @@
+{
+  "name": "lumen-canvas",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --port 4173",
+    "test": "vitest run",
+    "e2e": "playwright test",
+    "typecheck": "tsc --noEmit",
+    "predev": "node scripts/copy-fonts.mjs",
+    "prebuild": "node scripts/copy-fonts.mjs",
+    "postinstall": "node scripts/copy-fonts.mjs"
+  },
+  "dependencies": {
+    "@dagrejs/dagre": "^3.1.1",
+    "@excalidraw/excalidraw": "^0.18.1",
+    "idb-keyval": "^6.3.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.0",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@vercel/node": "^23.0.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "fake-indexeddb": "^6.2.5",
+    "jsdom": "^29.1.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.3"
+  }
+}
