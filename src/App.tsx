@@ -49,7 +49,8 @@ import { exportJsonCanvas, importJsonCanvas } from "./canvas/jsoncanvas";
 import { docFromGraph } from "./ai/local";
 import { downloadText, slugify } from "./store/download";
 import { Dock } from "./ui/Dock";
-import { Expanded, HistoryPanel, LiveEditor, Onboarding, ProjectMenu, SettingsDialog, Welcome } from "./ui/Panels";
+import { CommandPalette, Expanded, HistoryPanel, LiveEditor, Onboarding, ProjectMenu, SettingsDialog, TemplateGallery, Welcome, type Command } from "./ui/Panels";
+import { TEMPLATES_LIST } from "./ai/local";
 
 const CURRENT_KEY = "lumen:current";
 const isMobile = () => window.innerWidth < 700;
@@ -165,6 +166,8 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
   const [panel, setPanel] = useState<null | "history" | "settings" | "projects">(null);
   const [room, setRoomState] = useState<string | null>(() => roomOf(meta.id));
   const [link, setLink] = useState<"connecting" | "open" | "closed">("closed");
+  const [palette, setPalette] = useState(false);
+  const [gallery, setGallery] = useState(false);
   const [slide, setSlide] = useState<number | null>(null);
   const [onboard, setOnboard] = useState(() => !wasOnboarded());
   const [versions, setVersions] = useState<Version[]>([]);
@@ -455,13 +458,17 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
     const k = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement | null;
       const typing = t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable);
-      if ((e.key === "/" && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) || ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k")) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        e.stopPropagation(); // beats Excalidraw's own ⌘K (link) handler
+        setPalette((p) => !p);
+      } else if (e.key === "/" && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
         inputRef.current?.focus();
       }
     };
-    window.addEventListener("keydown", k);
-    return () => window.removeEventListener("keydown", k);
+    window.addEventListener("keydown", k, true);
+    return () => window.removeEventListener("keydown", k, true);
   }, []);
 
   /* ───────── running intents ───────── */
@@ -779,6 +786,82 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
     input.click();
   };
 
+  const useTemplate = async (id: string) => {
+    const a = apiRef.current;
+    const t = TEMPLATES_LIST.find((x) => x.id === id);
+    if (!a || !t) return;
+    await checkpoint(`Before template: ${t.label}`, "ai");
+    const res = await executePlan(a, { say: "", ops: [t.build()] }, { graph: buildGraph([], []), anchor: sceneCenter(a), anchorMode: "center" });
+    const made = a.getSceneElements().filter((e) => res.created.includes(e.id));
+    select(a, made.filter((e) => e.type !== "text" && e.type !== "arrow").map((e) => e.id));
+    reveal(a, made);
+    say(`${t.label} ready — fill it in.`, { undo: true });
+  };
+
+  /* ───────── data files → live table + chart ───────── */
+  const addDataFile = async (f: File, at?: { x: number; y: number }) => {
+    const a = apiRef.current;
+    if (!a) return;
+    if (f.size > 5_000_000) return say("That file is too big for the canvas.", { note: "Keep it under 5 MB." });
+    try {
+      const csv = await f.text();
+      const res = await executePlan(a, { say: "", ops: [{ op: "data", title: f.name.replace(/\.[^.]+$/, ""), csv }] }, { graph: buildGraph([], []), anchor: at ?? sceneCenter(a), anchorMode: "center" });
+      select(a, res.created);
+      const made = a.getSceneElements().filter((e) => res.created.includes(e.id));
+      reveal(a, made);
+      say(`Added ${f.name} as a live table + chart.`, { note: "Pick columns and chart type on the object; its choices are saved.", undo: true });
+    } catch (e: any) {
+      say("Couldn't use that file.", { note: String(e?.message ?? e).slice(0, 140) });
+    }
+  };
+  const pickDataFile = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".csv,.tsv,.txt,.json,text/csv,application/json";
+    input.onchange = () => input.files?.[0] && addDataFile(input.files[0]);
+    input.click();
+  };
+  useEffect(() => {
+    const isData = (f?: File) => !!f && /\.(csv|tsv)$/i.test(f.name);
+    const over = (e: DragEvent) => {
+      if (e.dataTransfer?.types?.includes("Files") && [...(e.dataTransfer.items ?? [])].some((i) => i.kind === "file" && /csv|tab-separated/.test(i.type))) e.preventDefault();
+    };
+    const drop = (e: DragEvent) => {
+      const f = e.dataTransfer?.files?.[0];
+      if (!isData(f)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const a = apiRef.current;
+      const at = a ? viewportCoordsToSceneCoords({ clientX: e.clientX, clientY: e.clientY }, a.getAppState()) : undefined;
+      addDataFile(f!, at);
+    };
+    window.addEventListener("dragover", over, true);
+    window.addEventListener("drop", drop, true);
+    return () => {
+      window.removeEventListener("dragover", over, true);
+      window.removeEventListener("drop", drop, true);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const commands: Command[] = [
+    { id: "templates", label: "Templates…", hint: "kanban, SWOT, retro…", keywords: "template board scaffold start", run: () => setGallery(true) },
+    { id: "present", label: "Present", hint: "frames → slides", keywords: "slides presentation", run: present },
+    { id: "history", label: "Version history", keywords: "restore undo checkpoint", run: openHistory },
+    { id: "share", label: "Copy share link", hint: "board in the URL", keywords: "share export link", run: shareLink },
+    { id: "live", label: room ? "Stop live sharing" : "Share live…", keywords: "collaborate realtime room", run: room ? leaveLive : shareLive },
+    { id: "data", label: "Add data (CSV / JSON)…", keywords: "chart table csv", run: pickDataFile },
+    { id: "md", label: "Export as Markdown", run: exportMarkdown },
+    { id: "jc", label: "Export as JSON Canvas", hint: "Obsidian", run: exportJsonCanvasFile },
+    { id: "jci", label: "Import JSON Canvas…", hint: "Obsidian", run: importJsonCanvasFile },
+    { id: "new", label: "New project", run: onNew },
+    { id: "projects", label: "Switch project…", run: () => setPanel("projects") },
+    { id: "settings", label: "AI settings", hint: "keys & providers", keywords: "api key openai gemini claude model", run: () => setPanel("settings") },
+    { id: "theme", label: theme === "dark" ? "Switch to light theme" : "Switch to dark theme", keywords: "dark light mode", run: () => setTheme(theme === "dark" ? "light" : "dark") },
+    { id: "talk", label: "Talk to the canvas", hint: "/", keywords: "prompt ask", run: () => inputRef.current?.focus() },
+    ...TEMPLATES_LIST.map((t) => ({ id: `t-${t.id}`, label: `Template: ${t.label}`, hint: t.desc, keywords: "template", run: () => useTemplate(t.id) })),
+  ];
+
   /* ───────── starters ───────── */
   const starter = (kind: "braindump" | "flow" | "outline" | "timer") => {
     const a = apiRef.current;
@@ -940,6 +1023,10 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
           <MainMenu.Item onSelect={room ? leaveLive : shareLive} data-testid="share-live">
             {room ? "Stop live sharing" : "Share live…"}
           </MainMenu.Item>
+          <MainMenu.Item onSelect={() => setGallery(true)} data-testid="templates">
+            Templates…
+          </MainMenu.Item>
+          <MainMenu.Item onSelect={() => setPalette(true)}>Command palette (⌘K)</MainMenu.Item>
           <MainMenu.Item onSelect={present} data-testid="present">
             Present
           </MainMenu.Item>
@@ -954,6 +1041,9 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
           </MainMenu.Item>
           <MainMenu.Item onSelect={exportJsonCanvasFile} data-testid="export-jsoncanvas">
             Export as JSON Canvas
+          </MainMenu.Item>
+          <MainMenu.Item onSelect={pickDataFile} data-testid="add-data">
+            Add data (CSV / JSON)…
           </MainMenu.Item>
           <MainMenu.Item onSelect={importJsonCanvasFile} data-testid="import-jsoncanvas">
             Import JSON Canvas…
@@ -1055,6 +1145,8 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
         </div>
       )}
 
+      {palette && <CommandPalette commands={commands} onAsk={(t) => run(t)} onClose={() => setPalette(false)} />}
+      {gallery && <TemplateGallery templates={TEMPLATES_LIST} onPick={useTemplate} onClose={() => setGallery(false)} />}
       {panel === "history" && <HistoryPanel versions={versions} current={api?.getSceneElementsIncludingDeleted() ?? []} onRestore={restore} onSave={async (l) => (await checkpoint(l, "manual"), setVersions(await listVersions(meta.id)), say(`Saved checkpoint “${l}”.`))} onClose={() => setPanel(null)} />}
       {panel === "settings" && <SettingsDialog settings={settings} serverClaude={serverClaude} onSave={(s) => (saveSettings(s), setSettings(s))} onTest={testConnection} onClose={() => setPanel(null)} />}
       {onboard && <Onboarding settings={settings} onSave={(s) => (saveSettings(s), setSettings(s))} onTest={testConnection} onDone={() => (markOnboarded(), setOnboard(false))} />}

@@ -282,3 +282,63 @@ export function pickTemplate(text: string): keyof typeof TEMPLATES | null {
   for (const [k, t] of Object.entries(TEMPLATES)) if (t.match.test(text)) return k as keyof typeof TEMPLATES;
   return null;
 }
+
+/* ───────────── data: table + chart, from a CSV/JSON drop ───────────── */
+import { suggestChart, type Table } from "../data/parse";
+
+export function dataObject(table: Table, title = "Data"): AppSpec {
+  const sug = suggestChart(table);
+  const payload = { cols: table.cols, rows: table.rows, truncated: !!table.truncated, sug };
+  const html = page(
+    `<div class="bar"><div class="tabs"><button data-tab="chart">Chart</button><button data-tab="table">Table</button></div>
+<div class="ctl" id="ctl"><select id="type"><option value="bar">Bar</option><option value="line">Line</option><option value="pie">Pie</option></select><select id="x" title="Group by"></select><select id="y" title="Value"></select></div></div>
+<div id="view"></div><div id="sum" class="mut"></div>`,
+    `
+var D=${json(payload)};var st=lumen.state||{};
+var tab=st.tab||"chart",type=st.type||D.sug.type,X=st.x!=null?st.x:D.sug.x,Y=st.y!=null?st.y:D.sug.y,sort=st.sort||null;
+function save(){lumen.save({tab:tab,type:type,x:X,y:Y,sort:sort})}
+function $(i){return document.getElementById(i)}
+function opt(sel,list,val){sel.innerHTML="";list.forEach(function(c){var o=document.createElement("option");o.value=c.i;o.textContent=c.n;sel.appendChild(o)});sel.value=val}
+opt($("x"),D.cols.map(function(c,i){return{n:c.n,i:i}}),X);opt($("y"),D.cols.map(function(c,i){return{n:c.n,i:i}}).filter(function(c){return D.cols[c.i].t==="number"}),Y);$("type").value=type;
+$("x").onchange=function(){X=+this.value;save();draw()};$("y").onchange=function(){Y=+this.value;save();draw()};$("type").onchange=function(){type=this.value;save();draw()};
+[].forEach.call(document.querySelectorAll("[data-tab]"),function(b){b.onclick=function(){tab=b.dataset.tab;save();draw()}});
+var COL=["#5b5bd6","#e8590c","#2f9e44","#d6336c","#1c7ed6","#e19b00","#0c8599","#7048e8"];
+function fmt(n){var a=Math.abs(n);return a>=1e9?(n/1e9).toFixed(1)+"B":a>=1e6?(n/1e6).toFixed(1)+"M":a>=1e4?(n/1e3).toFixed(1)+"k":(Math.round(n*100)/100).toLocaleString()}
+function agg(){var m={},order=[];D.rows.forEach(function(r){var k=String(r[X]==null?"—":r[X]);if(!(k in m)){m[k]=0;order.push(k)}m[k]+=Number(r[Y])||0});return order.map(function(k){return[k,m[k]]})}
+function el(n,a,t){var e=document.createElementNS("http://www.w3.org/2000/svg",n);for(var k in a)e.setAttribute(k,a[k]);if(t!=null)e.textContent=t;return e}
+function chart(){var v=$("view");v.innerHTML="";var data=type==="line"?D.rows.map(function(r){return[String(r[X]==null?"":r[X]),Number(r[Y])||0]}):agg();
+  if(type==="bar"&&data.length>40)data=data.slice(0,40);
+  if(!data.length){v.textContent="No data";return}
+  var W=Math.max(v.clientWidth,260),H=Math.max(window.innerHeight-130,180);var svg=el("svg",{viewBox:"0 0 "+W+" "+H,width:W,height:H});v.appendChild(svg);
+  var fg=getComputedStyle(document.body).color,mut=getComputedStyle(document.documentElement).getPropertyValue("--mut"),line=getComputedStyle(document.documentElement).getPropertyValue("--line");
+  if(type==="pie"){var tot=data.reduce(function(s,d){return s+Math.max(d[1],0)},0)||1;data=data.slice().sort(function(a,b){return b[1]-a[1]});
+    if(data.length>8){var rest=data.slice(7).reduce(function(s,d){return s+d[1]},0);data=data.slice(0,7).concat([["Other",rest]])}
+    var cx=Math.min(W*0.34,H/2),cy=H/2,r=Math.min(cx,cy)-12,a0=-Math.PI/2;
+    data.forEach(function(d,i){var a1=a0+Math.max(d[1],0)/tot*Math.PI*2,big=a1-a0>Math.PI?1:0;
+      var p=el("path",{d:"M"+cx+" "+cy+" L"+(cx+r*Math.cos(a0))+" "+(cy+r*Math.sin(a0))+" A"+r+" "+r+" 0 "+big+" 1 "+(cx+r*Math.cos(a1))+" "+(cy+r*Math.sin(a1))+" Z",fill:COL[i%COL.length]});p.appendChild(el("title",{},d[0]+": "+fmt(d[1])+" ("+Math.round(d[1]/tot*100)+"%)"));svg.appendChild(p);a0=a1;
+      svg.appendChild(el("rect",{x:cx*2+14,y:16+i*22,width:12,height:12,rx:3,fill:COL[i%COL.length]}));svg.appendChild(el("text",{x:cx*2+32,y:26+i*22,fill:fg,"font-size":12},(d[0].length>18?d[0].slice(0,17)+"…":d[0])+" · "+Math.round(d[1]/tot*100)+"%"))});return}
+  var L=46,R=10,T=10,B=data.length>12?56:34,pw=W-L-R,ph=H-T-B;var mx=Math.max.apply(null,data.map(function(d){return d[1]})),mn=Math.min(0,Math.min.apply(null,data.map(function(d){return d[1]})));if(mx===mn)mx=mn+1;
+  function sy(v){return T+ph-(v-mn)/(mx-mn)*ph}
+  for(var i=0;i<=4;i++){var val=mn+(mx-mn)*i/4,yy=sy(val);svg.appendChild(el("line",{x1:L,x2:W-R,y1:yy,y2:yy,stroke:line}));svg.appendChild(el("text",{x:L-6,y:yy+4,"text-anchor":"end","font-size":11,fill:mut},fmt(val)))}
+  var step=pw/data.length;
+  if(type==="bar"){data.forEach(function(d,i){var x=L+i*step+step*0.15,w=step*0.7,y0=sy(0),y1=sy(d[1]);var b=el("rect",{x:x,y:Math.min(y0,y1),width:w,height:Math.max(Math.abs(y0-y1),1),rx:3,fill:COL[0]});b.appendChild(el("title",{},d[0]+": "+fmt(d[1])));svg.appendChild(b);lab(i,d[0],x+w/2)})}
+  else{var pts=data.map(function(d,i){return[L+i*step+step/2,sy(d[1])]});svg.appendChild(el("path",{d:"M"+pts.map(function(p){return p[0]+" "+p[1]}).join(" L"),fill:"none",stroke:COL[0],"stroke-width":2.5,"stroke-linejoin":"round"}));
+    pts.forEach(function(p,i){var c=el("circle",{cx:p[0],cy:p[1],r:3.5,fill:COL[0]});c.appendChild(el("title",{},data[i][0]+": "+fmt(data[i][1])));svg.appendChild(c);lab(i,data[i][0],p[0])})}
+  function lab(i,t,x){if(data.length>24&&i%Math.ceil(data.length/24))return;var s=t.length>12?t.slice(0,11)+"…":t;var tx=el("text",{x:x,y:H-B+16,"text-anchor":data.length>12?"end":"middle","font-size":11,fill:mut},s);if(data.length>12)tx.setAttribute("transform","rotate(-40 "+x+" "+(H-B+16)+")");svg.appendChild(tx)}
+}
+function table(){var v=$("view");v.innerHTML="";var rows=D.rows.slice();if(sort){rows.sort(function(a,b){var p=a[sort.c],q=b[sort.c];if(p==null)return 1;if(q==null)return -1;return (typeof p==="number"?p-q:String(p).localeCompare(String(q)))*sort.d})}
+  var t=document.createElement("table"),h=t.createTHead().insertRow();D.cols.forEach(function(c,i){var th=document.createElement("th");th.textContent=c.n+(sort&&sort.c===i?(sort.d>0?" ▲":" ▼"):"");th.onclick=function(){sort=sort&&sort.c===i?(sort.d>0?{c:i,d:-1}:null):{c:i,d:1};save();draw()};h.appendChild(th)});
+  var tb=t.createTBody();rows.slice(0,500).forEach(function(r){var tr=tb.insertRow();r.forEach(function(x,i){var td=tr.insertCell();td.textContent=x==null?"":(typeof x==="number"?x.toLocaleString():x);if(D.cols[i].t==="number")td.className="n"})});
+  var wrap=document.createElement("div");wrap.className="tw";wrap.appendChild(t);v.appendChild(wrap)}
+function draw(){[].forEach.call(document.querySelectorAll("[data-tab]"),function(b){b.className=b.dataset.tab===tab?"on":""});$("ctl").style.display=tab==="chart"?"flex":"none";
+  if(tab==="chart")chart();else table();
+  var ys=D.rows.map(function(r){return Number(r[Y])||0}),s=ys.reduce(function(a,b){return a+b},0);
+  $("sum").textContent=D.rows.length+" rows"+(D.truncated?" (first "+D.rows.length+")":"")+" · "+D.cols[Y].n+": Σ "+fmt(s)+" · avg "+fmt(s/(ys.length||1))+" · max "+fmt(Math.max.apply(null,ys))}
+window.addEventListener("resize",function(){if(tab==="chart")chart()});draw();`,
+    `body{padding:10px 12px;display:flex;flex-direction:column}.bar{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}
+.tabs{display:flex;background:var(--card);border-radius:10px;padding:2px;border:1px solid var(--line)}.tabs button{border:0;background:transparent;padding:5px 12px;border-radius:8px}.tabs button.on{background:var(--acc);color:#fff}
+.ctl{display:flex;gap:6px}.ctl select{padding:5px 8px;font-size:13px;max-width:130px}#view{flex:1;min-height:0;overflow:auto}#sum{font-size:12px;padding-top:6px}
+.tw{overflow:auto;max-height:100%}table{border-collapse:collapse;width:100%;font-size:13px}th{position:sticky;top:0;background:var(--card);text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);cursor:pointer;white-space:nowrap}td{padding:5px 8px;border-bottom:1px solid var(--line);white-space:nowrap}td.n{text-align:right;font-variant-numeric:tabular-nums}`,
+  );
+  return { title, html, width: 600, height: 440 };
+}

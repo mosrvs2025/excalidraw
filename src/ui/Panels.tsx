@@ -400,3 +400,72 @@ export function Welcome({ onStarter, onFocus }: { onStarter: (id: "braindump" | 
     </div>
   );
 }
+
+/* ───────── command palette (⌘K) ───────── */
+
+export interface Command {
+  id: string;
+  label: string;
+  hint?: string;
+  keywords?: string;
+  run: () => void;
+}
+
+export function CommandPalette({ commands, onAsk, onClose }: { commands: Command[]; onAsk: (text: string) => void; onClose: () => void }) {
+  const [q, setQ] = useState("");
+  const [i, setI] = useState(0);
+  const query = q.trim().toLowerCase();
+  const matches = commands.filter((c) => !query || (c.label + " " + (c.keywords ?? "") + " " + (c.hint ?? "")).toLowerCase().includes(query)).slice(0, 9);
+  const rows: (Command | { id: "ask"; label: string; run: () => void; hint?: string })[] = query ? [...matches, { id: "ask", label: `Ask Lumen: “${q.trim()}”`, hint: "run as a prompt", run: () => onAsk(q.trim()) }] : matches;
+  const act = (c: { run: () => void }) => {
+    onClose();
+    setTimeout(c.run, 0);
+  };
+  return (
+    <div className="scrim top" onPointerDown={onClose}>
+      <div className="palette" role="dialog" aria-label="Command palette" onPointerDown={(e) => e.stopPropagation()} data-testid="palette">
+        <input
+          autoFocus
+          value={q}
+          placeholder="Do anything — or just describe it…"
+          aria-label="Search commands"
+          data-testid="palette-input"
+          onChange={(e) => (setQ(e.target.value), setI(0))}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === "Escape") onClose();
+            else if (e.key === "ArrowDown") (e.preventDefault(), setI((i + 1) % rows.length));
+            else if (e.key === "ArrowUp") (e.preventDefault(), setI((i - 1 + rows.length) % rows.length));
+            else if (e.key === "Enter" && rows[i]) (e.preventDefault(), act(rows[i]));
+          }}
+        />
+        <ul role="listbox">
+          {rows.map((c, n) => (
+            <li key={c.id} role="option" aria-selected={n === i} className={n === i ? "on" : ""} onMouseEnter={() => setI(n)} onClick={() => act(c)}>
+              <span>{c.label}</span>
+              {c.hint && <small>{c.hint}</small>}
+            </li>
+          ))}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+/* ───────── template gallery ───────── */
+
+export function TemplateGallery({ templates, onPick, onClose }: { templates: { id: string; label: string; desc: string; icon: string }[]; onPick: (id: string) => void; onClose: () => void }) {
+  return (
+    <Modal title="Start from a template" onClose={onClose} wide>
+      <div className="gallery" data-testid="gallery">
+        {templates.map((t) => (
+          <button key={t.id} onClick={() => (onClose(), onPick(t.id))} data-testid={`template-${t.id}`}>
+            <i>{t.icon}</i>
+            <b>{t.label}</b>
+            <span>{t.desc}</span>
+          </button>
+        ))}
+      </div>
+    </Modal>
+  );
+}

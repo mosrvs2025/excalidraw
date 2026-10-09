@@ -22,6 +22,8 @@ import { BRANCH_CYCLE, PALETTE } from "./palette";
 import { edgePoint, findFreeSpot } from "./placement";
 import { recognizeStroke, type Pt } from "./shapes";
 import { parseMermaidFlow } from "./mermaidFlow";
+import { parseTable } from "../data/parse";
+import { dataObject } from "../live/templates";
 
 /* Fonts: 5 = Excalifont (hand), 6 = Nunito (clean) */
 const FONT_HAND = 5;
@@ -506,7 +508,12 @@ export async function executePlan(
   for (const rawOp of plan.ops) {
     // Mermaid flowcharts are drawn natively; other Mermaid kinds go through the full renderer below
     const flow = rawOp.op === "mermaid" ? parseMermaidFlow(rawOp.code) : null;
-    const op: Op = flow ? { op: "diagram", ...flow } : rawOp;
+    let op: Op = flow ? { op: "diagram", ...flow } : rawOp;
+    if (op.op === "data") {
+      const table = parseTable(op.csv);
+      if (!table) throw new Error("I couldn't read that as a table (need a header row and at least two columns)");
+      op = { op: "app", ...dataObject(table, op.title) };
+    }
     switch (op.op) {
       case "diagram": {
         place(

@@ -47,6 +47,7 @@ export type Op =
       columns: { title: string; items: string[]; color?: ColorName }[];
     }
   | { op: "mermaid"; code: string }
+  | { op: "data"; title: string; csv: string }
   | { op: "cluster"; groups: { title: string; ids: string[]; color?: ColorName }[] }
   | { op: "app"; title: string; html: string; width?: number; height?: number }
   | { op: "doc"; title: string; markdown: string }
@@ -136,6 +137,9 @@ export function sanitizePlan(raw: unknown): Plan {
           ops.push({ op: "board", title: isStr(o.title) ? o.title : undefined, columns });
         break;
       }
+      case "data":
+        if (isStr(o.csv)) ops.push({ op: "data", title: isStr(o.title) ? String(o.title).slice(0, 80) : "Data", csv: String(o.csv).slice(0, 300_000) });
+        break;
       case "mermaid":
         if (isStr(o.code)) ops.push({ op: "mermaid", code: String(o.code).slice(0, 20000) });
         break;

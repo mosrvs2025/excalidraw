@@ -16,6 +16,7 @@ import {
 } from "../canvas/context";
 import { checklist, flowRunner, pickTemplate, TEMPLATES } from "../live/templates";
 import { classifyPrompt, MERMAID_RE, mermaidIn, type IntentId } from "./intents";
+import { looksTabular } from "../data/parse";
 import type { DiagramEdge, DiagramNode, Op, Plan } from "./schema";
 
 export interface IntentRequest {
@@ -376,36 +377,34 @@ function explain(g: CanvasGraph): string {
 /* ───────────── scaffolds ───────────── */
 
 type Board = Extract<Op, { op: "board" }>;
-const BOARDS: { match: RegExp; build: (t?: string) => Board | Extract<Op, { op: "diagram" }> }[] = [
+type Diagram = Extract<Op, { op: "diagram" }>;
+const cols = (title: string, defs: [string, string?][]): Board => ({
+  op: "board",
+  title,
+  columns: defs.map(([t, color]) => ({ title: t, items: [], color: color as any })),
+});
+
+export interface Template {
+  id: string;
+  label: string;
+  desc: string;
+  icon: string;
+  match: RegExp;
+  build: () => Board | Diagram;
+}
+/** Scaffolds you can ask for by name or pick from the gallery — structure only, you bring the content. */
+export const TEMPLATES_LIST: Template[] = [
+  { id: "kanban", label: "Kanban", desc: "To do · Doing · Done", icon: "▥", match: /kanban|sprint board|task board/, build: () => ({ ...cols("Kanban", [["To do"], ["Doing"], ["Done"]]), columns: [{ title: "To do", items: ["First task"] }, { title: "Doing", items: [] }, { title: "Done", items: [] }] }) },
+  { id: "swot", label: "SWOT", desc: "Strengths, weaknesses, opportunities, threats", icon: "✚", match: /swot/, build: () => cols("SWOT analysis", [["Strengths", "green"], ["Weaknesses", "red"], ["Opportunities", "blue"], ["Threats", "orange"]]) },
+  { id: "retro", label: "Retrospective", desc: "Went well · To improve · Actions", icon: "↺", match: /retro(spective)?|post-?mortem/, build: () => cols("Retrospective", [["Went well", "green"], ["To improve", "orange"], ["Actions", "purple"]]) },
+  { id: "proscons", label: "Pros & cons", desc: "Weigh a decision", icon: "⚖", match: /pros? (and|&|\/|vs) cons?|pros-?cons/, build: () => cols("Pros & cons", [["Pros", "green"], ["Cons", "red"]]) },
+  { id: "eisenhower", label: "Priority matrix", desc: "Do · Schedule · Delegate · Drop", icon: "◫", match: /eisenhower|priority matrix|urgent.{0,10}important/, build: () => cols("Priority matrix", [["Do first (urgent + important)", "red"], ["Schedule (important)", "blue"], ["Delegate (urgent)", "orange"], ["Drop (neither)", "gray"]]) },
+  { id: "meeting", label: "Meeting notes", desc: "Agenda · Notes · Decisions · Actions", icon: "✎", match: /meeting( notes)?|standup|agenda/, build: () => cols("Meeting", [["Agenda", "blue"], ["Notes", "yellow"], ["Decisions", "green"], ["Action items", "purple"]]) },
+  { id: "week", label: "Weekly planner", desc: "Monday to Friday", icon: "▦", match: /week(ly)? (plan|planner|schedule)|weekly/, build: () => cols("This week", [["Mon", "blue"], ["Tue", "green"], ["Wed", "yellow"], ["Thu", "orange"], ["Fri", "pink"]]) },
+  { id: "ssc", label: "Start · Stop · Continue", desc: "Team feedback", icon: "⇅", match: /(4|four) ?(w|questions)|start ?stop ?continue/, build: () => cols("Start · Stop · Continue", [["Start", "green"], ["Stop", "red"], ["Continue", "blue"]]) },
   {
-    match: /kanban|sprint board|task board/,
-    build: () => ({ op: "board", title: "Kanban", columns: [{ title: "To do", items: ["First task"] }, { title: "Doing", items: [] }, { title: "Done", items: [] }] }),
-  },
-  {
-    match: /swot/,
-    build: () => ({ op: "board", title: "SWOT analysis", columns: [{ title: "Strengths", items: [], color: "green" }, { title: "Weaknesses", items: [], color: "red" }, { title: "Opportunities", items: [], color: "blue" }, { title: "Threats", items: [], color: "orange" }] }),
-  },
-  {
-    match: /retro(spective)?|post-?mortem/,
-    build: () => ({ op: "board", title: "Retrospective", columns: [{ title: "Went well", items: [], color: "green" }, { title: "To improve", items: [], color: "orange" }, { title: "Actions", items: [], color: "purple" }] }),
-  },
-  {
-    match: /pros? (and|&|\/|vs) cons?|pros-?cons/,
-    build: () => ({ op: "board", title: "Pros & cons", columns: [{ title: "Pros", items: [], color: "green" }, { title: "Cons", items: [], color: "red" }] }),
-  },
-  {
-    match: /user journey|customer journey|funnel/,
-    build: () => ({
-      op: "diagram",
-      layout: "flow-right",
-      title: "User journey",
-      nodes: ["Discover", "Evaluate", "Sign up", "Onboard", "First value", "Retain"].map((l, i) => ({ id: `j${i}`, label: l })),
-      edges: [0, 1, 2, 3, 4].map((i) => ({ from: `j${i}`, to: `j${i + 1}` })),
-    }),
-  },
-  {
-    match: /(4|four) ?(w|questions)|start ?stop ?continue/,
-    build: () => ({ op: "board", title: "Start · Stop · Continue", columns: [{ title: "Start", items: [], color: "green" }, { title: "Stop", items: [], color: "red" }, { title: "Continue", items: [], color: "blue" }] }),
+    id: "journey", label: "User journey", desc: "Discover → Retain", icon: "⇢", match: /user journey|customer journey|funnel/,
+    build: () => ({ op: "diagram", layout: "flow-right", title: "User journey", nodes: ["Discover", "Evaluate", "Sign up", "Onboard", "First value", "Retain"].map((l, i) => ({ id: `j${i}`, label: l })), edges: [0, 1, 2, 3, 4].map((i) => ({ from: `j${i}`, to: `j${i + 1}` })) }),
   },
 ];
 
@@ -427,6 +426,14 @@ export function planOffline(req: IntentRequest): Plan {
   const outline = graphOutline(g);
   const textBlob = [q, ...g.items.map((i) => i.text)].join("\n");
 
+  // 0a. a dataset typed here, or sitting on the canvas
+  if (!req.intent && looksTabular(q)) return { say: "Made an interactive chart + table from your data.", ops: [{ op: "data", title: "Data", csv: q }], engine: "offline" };
+  if (req.intent === "data" || (!req.intent && classifyPrompt(q) === "data")) {
+    const t = g.items.find((i) => i.kind === "text" && looksTabular(i.text));
+    if (t) return { say: "Made an interactive chart + table from your data.", ops: [{ op: "data", title: "Data", csv: t.text }], engine: "offline" };
+    return { say: "Paste or drop a CSV / JSON file, or select text that looks like a table.", ops: [], engine: "offline" };
+  }
+
   // 0. Mermaid code, typed here or sitting on the canvas
   if (MERMAID_RE.test(q)) return { say: "Drew your Mermaid diagram.", ops: [{ op: "mermaid", code: q }], engine: "offline" };
   if (req.intent === "mermaid") {
@@ -437,9 +444,8 @@ export function planOffline(req: IntentRequest): Plan {
   if (req.intent === "ocr") return { say: "Select an image or sketch first.", ops: [], engine: "offline" };
 
   // 1. known scaffolds win when explicitly requested by name
-  for (const b of BOARDS) {
-    if (!req.intent && b.match.test(q.toLowerCase()))
-      return { say: `Set up a ${b.build().op === "board" ? (b.build() as Board).title : "journey"} board.`, ops: [b.build()], engine: "offline" };
+  for (const t of TEMPLATES_LIST) {
+    if (!req.intent && q.split(/\s+/).length <= 6 && t.match.test(q.toLowerCase())) return { say: `Set up a ${t.label} board.`, ops: [t.build()], engine: "offline" };
   }
 
   const promptArrows = req.intent ? null : parseArrows(q);

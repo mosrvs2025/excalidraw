@@ -1,4 +1,5 @@
 import { profileOf, type CanvasGraph } from "../canvas/context";
+import { looksTabular } from "../data/parse";
 
 export type IntentId =
   | "flow"
@@ -12,7 +13,8 @@ export type IntentId =
   | "tidy"
   | "mermaid"
   | "ocr"
-  | "refine";
+  | "refine"
+  | "data";
 
 export interface Suggestion {
   id: IntentId;
@@ -46,6 +48,8 @@ function suggestBase(g: CanvasGraph): Suggestion[] {
   const p = profileOf(g);
   const out: Suggestion[] = [];
   if (!p.count) return out;
+  const tab = g.items.find((i) => i.kind === "text" && looksTabular(i.text));
+  if (tab) return [{ id: "data", icon: "▥", label: "Chart this data", prompt: "Turn this table into an interactive chart", primary: true }, { id: "notes", icon: "▤", label: "Split to notes", prompt: "Split this into separate sticky notes" }];
   if (mermaidIn(g)) return [{ id: "mermaid", icon: "◇", label: "Draw this diagram", prompt: "Render this Mermaid code as a diagram", primary: true }];
   if (p.images + p.sketches > 0 && p.notes + p.texts + p.shapes === 0)
     return [
@@ -93,6 +97,7 @@ function suggestBase(g: CanvasGraph): Suggestion[] {
 export function classifyPrompt(prompt: string): IntentId | null {
   const q = prompt.toLowerCase();
   const rules: [RegExp, IntentId][] = [
+    [/\b(chart|graph|plot|table)\b.*\b(of|from|this|data|csv)\b|visuali[sz]e (this|the) data/, "data"],
     [/clean ?up|refine|snap|straighten (my|the)|neaten (my|the) (shapes|drawing)|make (it|them|this) (neat|clean|crisp)/, "refine"],
     [/mind ?-?map|brainstorm|expand|radial/, "mindmap"],
     [/review|critique|find (the )?(gaps|issues|problems|holes)|validate|audit|lint|what.?s missing|sanity/, "review"],

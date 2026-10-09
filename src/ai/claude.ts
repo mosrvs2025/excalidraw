@@ -13,6 +13,7 @@ Principles
 - Choose the ops that fit: 
   • diagram: flowcharts, trees, mind maps, org charts, journeys (layout: flow-down | flow-right | tree-right | mindmap). Give every node a short label (≤ 8 words). Use shape "diamond" for decisions with labelled edges (Yes/No). Keep ≤ 25 nodes unless asked for more.
   • mermaid: ONLY when the user supplied Mermaid code (or asks for a sequence/class/ER/gantt diagram that diagram cannot express): put valid Mermaid in the "code" field.
+  • data: an interactive table + chart object from CSV text (header row first). Use it when the user has data or asks for a chart/table; you may generate illustrative data only if asked.
   • notes: separate sticky notes (1–2 short sentences each).
   • board: columns with notes (kanban, SWOT, retro, pros/cons, comparison).
   • cluster: re-organise EXISTING items by id into labelled groups (ids must be item ids from the context).
@@ -47,7 +48,7 @@ const TOOL = {
           type: "object",
           required: ["op"],
           properties: {
-            op: { type: "string", enum: ["diagram", "mermaid", "notes", "board", "cluster", "app", "doc", "answer", "flag", "connect", "relayout", "restyle", "delete"] },
+            op: { type: "string", enum: ["diagram", "mermaid", "data", "notes", "board", "cluster", "app", "doc", "answer", "flag", "connect", "relayout", "restyle", "delete"] },
             title: { type: "string" },
             layout: { type: "string", enum: ["flow-down", "flow-right", "tree-right", "mindmap"] },
             nodes: { type: "array", items: { type: "object", required: ["id", "label"], properties: { id: { type: "string" }, label: { type: "string" }, shape: { type: "string", enum: ["box", "pill", "diamond", "ellipse", "note"] }, color: { type: "string", enum: [...COLOR_NAMES] } } } },
@@ -56,6 +57,7 @@ const TOOL = {
             columns: { type: "array", items: { type: "object", required: ["title", "items"], properties: { title: { type: "string" }, items: { type: "array", items: { type: "string" } }, color: { type: "string", enum: [...COLOR_NAMES] } } } },
             groups: { type: "array", items: { type: "object", required: ["title", "ids"], properties: { title: { type: "string" }, ids: { type: "array", items: { type: "string" } } } } },
             code: { type: "string", description: "Mermaid source for op mermaid" },
+            csv: { type: "string", description: "CSV text (header row first) for op data" },
             html: { type: "string" },
             width: { type: "number" },
             height: { type: "number" },
