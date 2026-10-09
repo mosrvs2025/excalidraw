@@ -22,6 +22,8 @@ export interface Settings {
   model: string;
   /** only for provider "custom": e.g. https://openrouter.ai/api/v1 or http://localhost:11434/v1 */
   baseUrl: string;
+  /** WebSocket relay for live collaboration, e.g. wss://my-relay.onrender.com (see server/relay.mjs) */
+  collabUrl: string;
   /** "auto": use AI if available, else offline. "offline": never leave the browser. */
   mode: "auto" | "offline";
 }
@@ -39,10 +41,11 @@ export function loadSettings(): Settings {
       apiKey: raw.apiKey || "",
       model: raw.model || PROVIDERS[provider].model,
       baseUrl: raw.baseUrl || "",
+      collabUrl: raw.collabUrl ?? (import.meta.env?.VITE_COLLAB_URL as string | undefined) ?? "",
       mode: raw.mode === "offline" ? "offline" : "auto",
     };
   } catch {
-    return { provider: "anthropic", apiKey: "", model: DEFAULT_MODEL, baseUrl: "", mode: "auto" };
+    return { provider: "anthropic", apiKey: "", model: DEFAULT_MODEL, baseUrl: "", collabUrl: (import.meta.env?.VITE_COLLAB_URL as string | undefined) ?? "", mode: "auto" };
   }
 }
 export function saveSettings(s: Settings) {

@@ -1,6 +1,7 @@
 import {
   convertToExcalidrawElements,
   CaptureUpdateAction,
+  getCommonBounds,
   newElementWith,
   restoreElements,
 } from "@excalidraw/excalidraw";
@@ -19,6 +20,7 @@ import {
 } from "./layout";
 import { BRANCH_CYCLE, PALETTE } from "./palette";
 import { findFreeSpot } from "./placement";
+import { parseMermaidFlow } from "./mermaidFlow";
 
 /* Fonts: 5 = Excalifont (hand), 6 = Nunito (clean) */
 const FONT_HAND = 5;
@@ -520,7 +522,10 @@ export async function executePlan(
   let firstCreateAnchored = false;
   void firstCreateAnchored;
 
-  for (const op of plan.ops) {
+  for (const rawOp of plan.ops) {
+    // Mermaid flowcharts are drawn natively; other Mermaid kinds go through the full renderer below
+    const flow = rawOp.op === "mermaid" ? parseMermaidFlow(rawOp.code) : null;
+    const op: Op = flow ? { op: "diagram", ...flow } : rawOp;
     switch (op.op) {
       case "diagram": {
         place(
@@ -541,6 +546,27 @@ export async function executePlan(
           },
         );
         break;
+      case "mermaid": {
+        let parsed: { elements: any[]; files?: Record<string, any> };
+        try {
+          const { parseMermaidToExcalidraw } = await import("@excalidraw/mermaid-to-excalidraw");
+          parsed = await parseMermaidToExcalidraw(op.code, { themeVariables: { fontSize: "18px" } });
+        } catch (e: any) {
+          throw new Error(`Couldn't read that Mermaid code${e?.message ? ` — ${String(e.message).split("\n")[0].slice(0, 90)}` : ""}`);
+        }
+        const made = convertToExcalidrawElements(parsed.elements, { regenerateIds: true });
+        if (!made.length) break;
+        const [x1, y1, x2, y2] = getCommonBounds(made);
+        const o = originFor(x2 - x1, y2 - y1);
+        const dx = o.x - x1;
+        const dy = o.y - y1;
+        const moved = made.map((e) => ({ ...e, x: e.x + dx, y: e.y + dy })) as El[];
+        if (parsed.files && Object.keys(parsed.files).length) api.addFiles(Object.values(parsed.files) as any);
+        ctx.els.push(...moved);
+        ctx.created.push(...moved);
+        ctx.cursor.y = o.y + (y2 - y1) + 90 + (opts.anchorMode === "center" ? (y2 - y1) / 2 : 0);
+        break;
+      }
       case "board":
         place(
           (ox, oy) => buildBoard(op, ox, oy),

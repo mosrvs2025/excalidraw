@@ -15,7 +15,7 @@ export interface DockProps {
   onEngineClick: () => void;
   onCancel: () => void;
   mobile: boolean;
-  inputRef: React.RefObject<HTMLInputElement>;
+  inputRef: React.RefObject<HTMLTextAreaElement>;
 }
 
 export function Dock(p: DockProps) {
@@ -47,12 +47,13 @@ export function Dock(p: DockProps) {
     return () => window.removeEventListener("keydown", onKey);
   }, [p.busy]);
 
-  const submit = (e: React.FormEvent) => {
+  const submit = (e: { preventDefault: () => void }) => {
     e.preventDefault();
     const v = text.trim();
     if (!v || p.busy) return;
     p.onRun(v);
     setText("");
+    if (p.inputRef.current) p.inputRef.current.style.height = "auto";
   };
 
   return (
@@ -96,10 +97,15 @@ export function Dock(p: DockProps) {
             </div>
           )}
           <form className="ask" onSubmit={submit}>
-            <input
+            <textarea
               ref={p.inputRef}
               value={text}
-              onChange={(e) => setText(e.target.value)}
+              rows={1}
+              onChange={(e) => {
+                setText(e.target.value);
+                e.target.style.height = "auto";
+                e.target.style.height = Math.min(e.target.scrollHeight, 150) + "px";
+              }}
               placeholder={p.placeholder}
               aria-label="Tell the canvas what to do"
               data-testid="intent-input"
@@ -108,7 +114,11 @@ export function Dock(p: DockProps) {
               spellCheck={false}
               onKeyDown={(e) => {
                 e.stopPropagation();
-                if (e.key === "Escape") (e.target as HTMLInputElement).blur();
+                if (e.key === "Escape") (e.target as HTMLTextAreaElement).blur();
+                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  submit(e);
+                }
               }}
             />
             <button type="button" className={`engine ${p.engine}`} onClick={p.onEngineClick} title={p.engine === "claude" ? `Powered by ${p.engineLabel}` : "Offline engine — click to connect an AI"}>

@@ -6,3 +6,4 @@ playwright-report
 .env*
 !.env.example
 public/fonts
+public/ocr

@@ -15,7 +15,7 @@ import {
   type OutlineItem,
 } from "../canvas/context";
 import { checklist, flowRunner, pickTemplate, TEMPLATES } from "../live/templates";
-import { classifyPrompt, type IntentId } from "./intents";
+import { classifyPrompt, MERMAID_RE, mermaidIn, type IntentId } from "./intents";
 import type { DiagramEdge, DiagramNode, Op, Plan } from "./schema";
 
 export interface IntentRequest {
@@ -426,6 +426,14 @@ export function planOffline(req: IntentRequest): Plan {
   const sel = g.scope === "selection";
   const outline = graphOutline(g);
   const textBlob = [q, ...g.items.map((i) => i.text)].join("\n");
+
+  // 0. Mermaid code, typed here or sitting on the canvas
+  if (MERMAID_RE.test(q)) return { say: "Drew your Mermaid diagram.", ops: [{ op: "mermaid", code: q }], engine: "offline" };
+  if (req.intent === "mermaid") {
+    const code = mermaidIn(g);
+    if (code) return { say: "Drew your Mermaid diagram.", ops: [{ op: "mermaid", code }], engine: "offline" };
+  }
+  if (req.intent === "ocr") return { say: "Select an image or sketch first.", ops: [], engine: "offline" };
 
   // 1. known scaffolds win when explicitly requested by name
   for (const b of BOARDS) {

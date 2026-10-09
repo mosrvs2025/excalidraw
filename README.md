@@ -25,6 +25,10 @@ It works **with no API key**. Add one (or deploy with a server key) and Claude t
 | **Safe by construction** | Model output is coerced through `sanitizePlan` into well-formed ops (unknown ops, dangling edges, oversize payloads dropped); apps run in an opaque-origin sandbox; the hosted proxy pins the model, caps tokens, whitelists fields and rate-limits. If Claude fails, the offline engine still answers. |
 | **Never lose work** | Local-first projects (IndexedDB), autosave, multiple boards, and **version history** — Lumen checkpoints *before every AI action*, plus manual named checkpoints, with per-version diffs (`+3 −1 ~2`) and one-click restore (itself undoable). |
 | **Serverless sharing** | *Copy share link* packs the whole board into the URL fragment (gzip + base64url). The fragment never reaches a server; opening it imports the board as a new local project — on any device. |
+| **Any AI, or none** | Anthropic, OpenAI, Gemini, or any OpenAI-compatible endpoint (OpenRouter, Groq, Ollama, LM Studio). First-run popup is skippable; ✦ settings has *Test connection*. Keys stay in the browser. |
+| **Mermaid in, native shapes out** | Paste/type Mermaid (or have a text block on the canvas offer *Draw this diagram*). Flowcharts are parsed natively into editable Lumen diagrams; sequence/class/ER/gantt use `@excalidraw/mermaid-to-excalidraw` (lazy-loaded). |
+| **On-device OCR** | *Read text* on any image/sketch uses Tesseract (WASM, self-hosted, no network, no key) and drops the text on the canvas as a note you can then structure, cluster or mind-map. |
+| **Live rooms across devices** | *Share live…* gives a private room link; a tiny stateless relay (`server/relay.mjs`) forwards messages, and merging stays client-side via Excalidraw's `reconcileElements`. Same-browser tabs sync with no server. |
 | **Collab-ready architecture** | A `SyncAdapter` interface. Today's adapter is `BroadcastChannel`: live multi-tab collaboration with presence and cursors, using Excalidraw's `reconcileElements` for conflict-free merges. A WebSocket / Yjs adapter is a drop-in (`src/store/sync.ts`). |
 
 ---
@@ -80,17 +84,22 @@ Engines produce plans; `execute.ts` turns them into canvas elements (one history
 
 ---
 
-## Using Claude
+## AI providers (all optional)
 
-Three ways, in priority order:
+Open ✦ → pick **Claude / GPT / Gemini / Custom**, paste a key, *Test connection*. Defaults: `claude-sonnet-5-5`, `gpt-4o`, `gemini-2.5-flash` — edit the model field freely. *Custom* takes any OpenAI-compatible base URL (e.g. `https://openrouter.ai/api/v1`, `http://localhost:11434/v1` for Ollama; key optional locally).
 
-1. **Bring your own key** — ✦ in the top-right → paste an Anthropic key. It is stored in `localStorage` only and sent straight to `api.anthropic.com` (browser-direct header).
-2. **Hosted** — set `ANTHROPIC_API_KEY` (and optionally `LUMEN_MODEL`) in Vercel; the browser never sees it. The proxy (`api/_core.ts`) pins the model, caps `max_tokens`, forwards only whitelisted fields, limits body size and rate-limits per IP (in-memory, best effort).
-3. **Offline** — nothing leaves the device. "Stay offline" in settings enforces it.
+1. **Your own key** — stored in `localStorage`, sent straight from your browser to the provider.
+2. **Hosted** (Anthropic only) — set `ANTHROPIC_API_KEY` (and optionally `LUMEN_MODEL`) in Vercel; the browser never sees it. `api/_core.ts` pins the model, caps tokens, whitelists fields and rate-limits per IP.
+3. **Offline** — nothing leaves the device; "Stay offline" enforces it.
+
+Every provider gets the same canvas context, selection image and `canvas_plan` tool; adapters live in `src/ai/providers.ts`. If a provider call fails, the offline engine still answers.
+
+## Live collaboration relay
 
 ```
-cp .env.example .env     # ANTHROPIC_API_KEY=sk-ant-…   (works with `npm run dev` and `npm run preview` too)
+npm run relay                      # ws://localhost:8787  (PORT to change)
 ```
+Deploy `server/relay.mjs` anywhere that runs Node + WebSockets (Render, Fly.io, Railway, a VPS — **not** Vercel functions). Then set its `wss://` address in ✦ settings (or `VITE_COLLAB_URL` at build time) and use menu → *Share live…*. The relay keeps no state and no boards; a late joiner receives the board from a connected peer, so someone must be online. Room links are unguessable bearer URLs — treat them as private. There is no auth yet.
 
 ## Deploy to Vercel
 
@@ -108,13 +117,15 @@ Set `ANTHROPIC_API_KEY` in the project's environment variables to enable the hos
 | ![Clustered](docs/screenshots/02-clustered.png) | ![Find gaps](docs/screenshots/05-find-gaps.png) |
 | ![Flow runner](docs/screenshots/06-flow-runner.png) | ![Doc card](docs/screenshots/08-doc-card.png) |
 | ![History](docs/screenshots/09-history.png) | ![Mind map](docs/screenshots/15-mindmap.png) |
+| ![Mermaid](docs/screenshots/19-mermaid.png) | ![OCR](docs/screenshots/20-ocr.png) |
+| ![Onboarding](docs/screenshots/17-onboarding.png) | |
 
 Phone (390px): ![Mobile](docs/screenshots/13-mobile-clustered.png)
 
 ## Tests
 
 ```
-npm test            # 30 unit tests: planner, clustering, review, layout, placement, markdown, share links, schema sanitising, store, proxy, Claude payload
+npm test            # 38 unit tests (+ relay): planner, clustering, review, layout, placement, markdown, share links, schema sanitising, store, proxy, Claude payload
 npm run e2e         # Playwright (builds, serves, drives real Chromium): see e2e/*.spec.ts
 ```
 
@@ -123,7 +134,8 @@ The e2e suite exercises real pointer drawing, every intent chip, undo, animated 
 ## Known limitations (honest list)
 
 - **Offline engine can't invent knowledge or read freehand sketches.** It restructures, clusters, lints and builds from what's labelled. Generation and sketch-to-app need Claude.
-- **Collaboration is same-browser (multi-tab) today.** The architecture is adapter-based but there is no cloud room server yet; there's no auth/sharing.
+- **Live rooms need you to host the small relay** (not included in the Vercel deploy) and have no auth; if all peers leave, the board lives only in their local copies.
+- **OCR is best on printed text/screenshots**; handwriting is unreliable offline (an AI key reads it much better).
 - Live objects can't make network calls (sandbox + no external resources by design) and keep state as JSON ≤ 400 KB.
 - Auto-layout is dagre/mind-map based; very large graphs (>80 nodes) are truncated by `sanitizePlan`.
 - Excalidraw's own side panel overlaps the canvas on selection (upstream behaviour); the dock repositions around it but can't move it.

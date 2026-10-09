@@ -95,8 +95,8 @@ button { font-family: inherit; }
 .chip.ghost { height: 26px; padding: 0 9px; color: var(--mut); font-size: 11px; }
 .ask { display: flex; align-items: center; gap: 6px; background: var(--surface-solid); border: 1px solid var(--line); border-radius: 14px; padding: 4px 4px 4px 12px; min-width: min(430px, calc(100vw - 48px)); }
 .ask:focus-within { border-color: var(--acc); box-shadow: 0 0 0 3px var(--acc-soft); }
-.ask input { all: unset; flex: 1; min-width: 0; font: 400 14px var(--font); color: var(--ink); height: 30px; }
-.ask input::placeholder { color: var(--mut); }
+.ask textarea { all: unset; flex: 1; min-width: 0; font: 400 14px/20px var(--font); color: var(--ink); padding: 5px 0; max-height: 150px; overflow-y: auto; white-space: pre-wrap; resize: none; }
+.ask textarea::placeholder { color: var(--mut); }
 .engine { all: unset; cursor: pointer; font: 600 11px var(--font); padding: 5px 9px; border-radius: 999px; background: var(--acc-soft); color: var(--mut); white-space: nowrap; }
 .engine.claude { color: var(--acc); }
 .engine:hover { color: var(--ink); }
@@ -233,3 +233,5 @@ button { font-family: inherit; }
 .form .btn.big { padding: 12px 16px; font-size: 15px; text-align: center; }
 .form .btn { text-align: center; } .mut.small { font-size: 12px; margin: 0; }
 .form input[type="text"] { font: 400 14px var(--font); padding: 9px 11px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface-solid); color: var(--ink); outline: none; }
+.live-badge { all: unset; cursor: pointer; font: 700 12px var(--font); padding: 8px 10px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line); color: #2f9e44; }
+.live-badge.connecting { color: #e19b00; } .live-badge.closed { color: #e03131; }

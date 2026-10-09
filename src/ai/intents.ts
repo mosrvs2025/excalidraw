@@ -9,7 +9,9 @@ export type IntentId =
   | "app"
   | "doc"
   | "explain"
-  | "tidy";
+  | "tidy"
+  | "mermaid"
+  | "ocr";
 
 export interface Suggestion {
   id: IntentId;
@@ -24,10 +26,24 @@ export interface Suggestion {
  * Verbs that make sense for *this* selection. The canvas decides what to offer —
  * there is no chat box to stare at, just the next obvious moves.
  */
+export const MERMAID_RE = /^\s*(?:%%[^\n]*\n\s*)*(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram(?:-v2)?|erDiagram|gantt|pie|journey|mindmap|timeline|gitGraph|quadrantChart)\b/;
+
+export function mermaidIn(g: CanvasGraph): string | null {
+  const t = g.items.find((i) => i.kind === "text" && MERMAID_RE.test(i.text));
+  return t ? t.text : null;
+}
+
 export function suggestFor(g: CanvasGraph): Suggestion[] {
   const p = profileOf(g);
   const out: Suggestion[] = [];
   if (!p.count) return out;
+  if (mermaidIn(g)) return [{ id: "mermaid", icon: "◇", label: "Draw this diagram", prompt: "Render this Mermaid code as a diagram", primary: true }];
+  if (p.images + p.sketches > 0 && p.notes + p.texts + p.shapes === 0)
+    return [
+      { id: "app", icon: "▶", label: "Make it real", prompt: "Build a working prototype of what this sketch shows", primary: true },
+      { id: "ocr", icon: "Aa", label: "Read text", prompt: "Read the text in this image" },
+      { id: "explain", icon: "✦", label: "What is this?", prompt: "Describe what this is and suggest next steps" },
+    ];
   const textual = p.outlineLines >= 2;
   const hasGraph = p.edges >= 1 && p.shapes + p.notes >= 3;
 

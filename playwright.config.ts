@@ -17,10 +17,13 @@ export default defineConfig({
       args: ["--no-sandbox"],
     },
   },
-  webServer: {
-    command: "npm run build && npx vite preview --host 127.0.0.1 --port 4173 --strictPort",
-    url: "http://127.0.0.1:4173",
-    reuseExistingServer: true,
-    timeout: 180_000,
-  },
+  webServer: [
+    {
+      command: "npm run build && npx vite preview --host 127.0.0.1 --port 4173 --strictPort",
+      url: "http://127.0.0.1:4173",
+      reuseExistingServer: true,
+      timeout: 180_000,
+    },
+    { command: "PORT=8787 node server/relay.mjs", url: "http://127.0.0.1:8787", reuseExistingServer: true, timeout: 20_000 },
+  ],
 });

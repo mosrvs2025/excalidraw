@@ -41,7 +41,7 @@ import {
   type ProjectMeta,
   type Version,
 } from "./store/projects";
-import { BroadcastSync, randomIdentity, type SyncMessage } from "./store/sync";
+import { BroadcastSync, newRoomId, projectOfRoom, randomIdentity, roomOf, setRoom, WebSocketSync, type SyncAdapter, type SyncMessage } from "./store/sync";
 import { decodeBoard, encodeBoard, MAX_LINK_CHARS } from "./store/share";
 import { Dock } from "./ui/Dock";
 import { Expanded, HistoryPanel, LiveEditor, Onboarding, ProjectMenu, SettingsDialog, Welcome } from "./ui/Panels";
@@ -67,6 +67,17 @@ export default function App() {
     (async () => {
       let projects = await listProjects();
       // a shared link opens as its own project (the fragment never leaves the browser)
+      const joinRoom = /^#room=([A-Za-z0-9_-]{8,64})$/.exec(location.hash)?.[1];
+      if (joinRoom) {
+        let pid = projectOfRoom(joinRoom);
+        if (!pid || !projects.some((p) => p.id === pid)) {
+          pid = (await createProject("Live board")).id;
+          setRoom(pid, joinRoom);
+        }
+        history.replaceState(null, "", location.pathname + location.search);
+        await open(pid);
+        return;
+      }
       const shared = await decodeBoard(location.hash);
       if (shared) {
         const p = await createProject(shared.name, { elements: shared.elements, files: {} });
@@ -147,6 +158,8 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
   const [engine, setEngine] = useState<EngineKind>("offline");
   const [serverClaude, setServerClaude] = useState(false);
   const [panel, setPanel] = useState<null | "history" | "settings" | "projects">(null);
+  const [room, setRoomState] = useState<string | null>(() => roomOf(meta.id));
+  const [link, setLink] = useState<"connecting" | "open" | "closed">("closed");
   const [onboard, setOnboard] = useState(() => !wasOnboarded());
   const [versions, setVersions] = useState<Version[]>([]);
   const [editing, setEditing] = useState<null | { id: string; kind: "app" | "doc" }>(null);
@@ -156,7 +169,7 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
   const [renaming, setRenaming] = useState(false);
   const [mobile, setMobile] = useState(isMobile());
 
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const autosaver = useRef(new Autosaver(450)).current;
   const lastSig = useRef(sceneSignature(initial.elements));
@@ -290,8 +303,9 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
 
   useEffect(() => {
     if (!api) return;
-    const sync = new BroadcastSync(meta.id);
-    syncRef.current = sync;
+    const collabUrl = settingsRef.current.collabUrl;
+    const sync: SyncAdapter = room && collabUrl ? new WebSocketSync(collabUrl, room, setLink) : new BroadcastSync(meta.id);
+    syncRef.current = sync as BroadcastSync;
     api.getSceneElementsIncludingDeleted().forEach((e) => sentVersions.current.set(e.id, e.version));
     const refreshPeers = () => {
       const now = Date.now();
@@ -338,7 +352,7 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
       sync.stop();
       syncRef.current = null;
     };
-  }, [api, meta.id, identity, publishScene]);
+  }, [api, meta.id, identity, publishScene, room, settings.collabUrl]);
 
   /* ───────── live-object state bridge ───────── */
   useEffect(() => {
@@ -491,17 +505,19 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
       abortRef.current = ctl;
       try {
         await checkpoint(`Before: ${prompt.slice(0, 44)}`, "ai");
-        // let Claude see sketches and handwriting
+        const selectionBlob = async () =>
+          exportToBlob({
+            elements: selected,
+            appState: { exportBackground: true, viewBackgroundColor: "#ffffff" } as any,
+            files: a.getFiles(),
+            mimeType: "image/png",
+            maxWidthOrHeight: intent === "ocr" ? 2400 : 1280,
+          });
+        // let the AI see sketches and handwriting
         let imageBase64: string | undefined;
-        if (eng === "claude" && selected.length) {
+        if (eng === "claude" && selected.length && intent !== "ocr") {
           try {
-            const blob = await exportToBlob({
-              elements: selected,
-              appState: { exportBackground: true, viewBackgroundColor: "#ffffff" } as any,
-              files: a.getFiles(),
-              mimeType: "image/png",
-              maxWidthOrHeight: 1280,
-            });
+            const blob = await selectionBlob();
             imageBase64 = await new Promise<string>((res) => {
               const r = new FileReader();
               r.onload = () => res(String(r.result).split(",")[1]);
@@ -510,7 +526,15 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
           } catch {}
         }
         const lm = liveSel ? getMeta(liveSel) : undefined;
-        const plan: Plan & { note?: string } = await runIntent(
+        let plan: Plan & { note?: string };
+        if (intent === "ocr") {
+          setBusy("Reading text on-device…");
+          const { recognize } = await import("./ocr/ocr");
+          const r = await recognize(await selectionBlob());
+          plan = r.text
+            ? { say: `Read ${r.text.split("\n").length} line(s) on-device.`, ops: [{ op: "answer", title: "Text I read", text: r.text }], engine: "offline", note: r.confidence < 60 ? "Low confidence — handwriting works best with an AI key." : undefined }
+            : { say: "Couldn't find readable text.", ops: [], engine: "offline", note: "Printed text and screenshots work best; for handwriting, connect an AI key." };
+        } else plan = await runIntent(
           { prompt, intent, graph, imageBase64, editing: lm ? { title: lm.title, html: lm.html, markdown: lm.markdown } : undefined },
           settingsRef.current,
           ctl.signal,
@@ -634,6 +658,29 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
     }
   };
 
+  const shareLive = async () => {
+    if (!settingsRef.current.collabUrl) {
+      say("Live sharing needs a relay server.", { note: "Add its address in ✦ settings (server/relay.mjs — see README)." });
+      return setPanel("settings");
+    }
+    const id = room ?? newRoomId();
+    setRoom(meta.id, id);
+    setRoomState(id);
+    const url = `${location.origin}${location.pathname}#room=${id}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      say("Live link copied.", { note: "Anyone with it joins this board in real time. Keep the link private." });
+    } catch {
+      window.prompt("Copy this live link", url);
+    }
+  };
+  const leaveLive = () => {
+    setRoom(meta.id, null);
+    setRoomState(null);
+    setLink("closed");
+    say("Stopped live sharing. Your copy stays here.");
+  };
+
   /* ───────── starters ───────── */
   const starter = (kind: "braindump" | "flow" | "outline" | "timer") => {
     const a = apiRef.current;
@@ -732,7 +779,7 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
       <Excalidraw
         excalidrawAPI={(a) => {
           apiRef.current = a;
-          (window as any).__lumen = { api: a, projectId: meta.id };
+          (window as any).__lumen = { api: a, projectId: meta.id, restore: restoreElements }; // test/debug handle
           setApi(a);
         }}
         initialData={{
@@ -769,6 +816,11 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
                 <small>{peers.length + 1} here</small>
               </div>
             )}
+            {room && (
+              <button className={`live-badge ${link}`} onClick={shareLive} title="Live room — click to copy the link" data-testid="live-badge">
+                ● Live
+              </button>
+            )}
             <button className="icon-btn" onClick={openHistory} title="History" aria-label="History" data-testid="open-history">
               ⟲
             </button>
@@ -785,6 +837,9 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
         <MainMenu>
           <MainMenu.Item onSelect={() => setPanel("projects")}>Projects…</MainMenu.Item>
           <MainMenu.Item onSelect={onNew}>New project</MainMenu.Item>
+          <MainMenu.Item onSelect={room ? leaveLive : shareLive} data-testid="share-live">
+            {room ? "Stop live sharing" : "Share live…"}
+          </MainMenu.Item>
           <MainMenu.Item onSelect={openHistory}>Version history</MainMenu.Item>
           <MainMenu.Item onSelect={shareLink} data-testid="share-link">
             Copy share link

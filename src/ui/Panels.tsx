@@ -190,6 +190,10 @@ export function SettingsDialog({
         </p>
         {serverClaude && <p className="ok">✓ This deployment already provides AI for everyone.</p>}
         <ProviderSetup settings={s} onChange={setS} onTest={onTest} />
+        <label>
+          Live collaboration server <span className="mut">(optional — wss:// address of server/relay.mjs)</span>
+          <input value={s.collabUrl} placeholder="wss://your-relay.example.com" onChange={(e) => setS({ ...s, collabUrl: e.target.value.trim() })} onKeyDown={(e) => e.stopPropagation()} data-testid="collab-url" />
+        </label>
         <label className="check">
           <input type="checkbox" checked={s.mode === "offline"} onChange={(e) => setS({ ...s, mode: e.target.checked ? "offline" : "auto" })} />
           Stay offline — never send anything off this device

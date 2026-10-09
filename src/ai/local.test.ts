@@ -186,3 +186,33 @@ describe("provider adapters", () => {
     expect(parseGemini({ candidates: [{ content: { parts: [{ functionCall: { name: "canvas_plan", args: input } }] } }] }).ops).toHaveLength(1);
   });
 });
+
+describe("mermaid", () => {
+  it("typed Mermaid becomes a mermaid op; a canvas text block gets a chip", () => {
+    const g = { scope: "canvas", items: [], edges: [], aliasToId: {}, idToAlias: {}, bounds: null } as CanvasGraph;
+    const p = planOffline({ prompt: "flowchart TD\n  A-->B", graph: g });
+    expect((p.ops[0] as any).op).toBe("mermaid");
+    const onCanvas = graph([item("n1", "sequenceDiagram\n  A->>B: hi", { kind: "text" })]);
+    expect(suggestFor(onCanvas)[0].id).toBe("mermaid");
+    expect((planOffline({ prompt: "", intent: "mermaid", graph: onCanvas }).ops[0] as any).code).toContain("sequenceDiagram");
+    // plain arrow syntax is NOT mistaken for mermaid
+    expect((planOffline({ prompt: "A -> B -> C", graph: g }).ops[0] as any).op).toBe("diagram");
+  });
+});
+
+import { parseMermaidFlow } from "../canvas/mermaidFlow";
+describe("native mermaid flowcharts", () => {
+  it("parses shapes, chains, labels and direction", () => {
+    const r = parseMermaidFlow("flowchart LR\n  A[Start] --> B{Ready?}\n  B -->|Yes| C(Ship) --> D((Done))\n  B -- no --> E[Fix]\n  E --> B")!;
+    expect(r.layout).toBe("flow-right");
+    expect(r.nodes.find((n) => n.id === "B")).toMatchObject({ label: "Ready?", shape: "diamond" });
+    expect(r.nodes.find((n) => n.id === "D")!.shape).toBe("ellipse");
+    expect(r.edges).toContainEqual({ from: "B", to: "C", label: "Yes" });
+    expect(r.edges).toContainEqual({ from: "B", to: "E", label: "no" });
+    expect(r.edges).toHaveLength(5);
+  });
+  it("defers non-flowcharts and garbage to the full renderer", () => {
+    expect(parseMermaidFlow("sequenceDiagram\n A->>B: hi")).toBeNull();
+    expect(parseMermaidFlow("graph TD\n A[[[ -->")).toBeNull();
+  });
+});
