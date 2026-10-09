@@ -14,13 +14,13 @@ import {
   viewportCoordsToSceneCoords,
 } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
-import type { ExcalidrawElement, ExcalidrawEmbeddableElement } from "@excalidraw/excalidraw/element/types";
+import type { ExcalidrawElement, ExcalidrawEmbeddableElement, ExcalidrawImageElement } from "@excalidraw/excalidraw/element/types";
 import type { AppState, Collaborator, ExcalidrawImperativeAPI, SocketId } from "@excalidraw/excalidraw/types";
 
 import { buildGraph, getMeta, type CanvasGraph } from "./canvas/context";
 import { buildNotes, executePlan, insertSkeleton, LIVE_HOST, uid, type ExecResult } from "./canvas/execute";
 import { runIntent, engineAvailable, serverHasClaude, type EngineKind } from "./ai/engine";
-import { suggestFor, type IntentId, type Suggestion } from "./ai/intents";
+import { classifyPrompt, suggestFor, type IntentId, type Suggestion } from "./ai/intents";
 import { loadSettings, markOnboarded, PROVIDERS, saveSettings, wasOnboarded, type Settings } from "./ai/settings";
 import { askProvider } from "./ai/providers";
 import { sanitizePlan, type Plan } from "./ai/schema";
@@ -48,6 +48,10 @@ import { decodeBoard, encodeBoard, MAX_LINK_CHARS } from "./store/share";
 import { exportJsonCanvas, importJsonCanvas } from "./canvas/jsoncanvas";
 import { docFromGraph } from "./ai/local";
 import { downloadText, slugify } from "./store/download";
+import { ImageEditor } from "./ui/ImageEditor";
+import type { FinalImage } from "./image/render";
+import { dominantColors } from "./image/palette";
+import { exportToCanvas as exportCanvasFrame } from "@excalidraw/excalidraw";
 import { Dock } from "./ui/Dock";
 import { AgentDialog, CommandPalette, Expanded, HistoryPanel, LiveEditor, Onboarding, ProjectMenu, SettingsDialog, TemplateGallery, Welcome, type Command } from "./ui/Panels";
 import { TEMPLATES_LIST } from "./ai/local";
@@ -144,6 +148,7 @@ interface SelState {
   rect: { x: number; y: number; w: number; h: number } | null;
   graph: CanvasGraph | null;
   live: ExcalidrawEmbeddableElement | null;
+  image: ExcalidrawImageElement | null;
 }
 
 function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: WorkspaceProps) {
@@ -156,7 +161,7 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
     } catch {}
     return matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   });
-  const [sel, setSel] = useState<SelState>({ ids: [], rect: null, graph: null, live: null });
+  const [sel, setSel] = useState<SelState>({ ids: [], rect: null, graph: null, live: null, image: null });
   const [empty, setEmpty] = useState(initial.elements.filter((e) => !e.isDeleted).length === 0);
   const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<{ text: string; note?: string; undo?: boolean; id: number } | null>(null);
@@ -167,6 +172,7 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
   const [room, setRoomState] = useState<string | null>(() => roomOf(meta.id));
   const [link, setLink] = useState<"connecting" | "open" | "closed">("closed");
   const [palette, setPalette] = useState(false);
+  const [editImg, setEditImg] = useState(false);
   const [agentDlg, setAgentDlg] = useState(false);
   const [gallery, setGallery] = useState(false);
   const [slide, setSlide] = useState<number | null>(null);
@@ -193,6 +199,7 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
   const toastId = useRef(0);
+  const cutoutRef = useRef<() => Promise<string>>(async () => "");
   const agentRef = useRef<(id: string, plan: unknown, sync: SyncAdapter) => Promise<void>>(async () => {});
   const runAgentPlan = (id: string, plan: unknown, sync: SyncAdapter) => agentRef.current(id, plan, sync);
 
@@ -424,11 +431,11 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
     selRaf.current = requestAnimationFrame(() => {
       const ids = Object.keys(appState.selectedElementIds).filter((k) => appState.selectedElementIds[k]);
       if (!ids.length || appState.editingTextElement || appState.newElement) {
-        setSel((s) => (s.ids.length || s.rect ? { ids: [], rect: null, graph: null, live: null } : s));
+        setSel((s) => (s.ids.length || s.rect ? { ids: [], rect: null, graph: null, live: null, image: null } : s));
         return;
       }
       const selEls = elements.filter((e) => !e.isDeleted && ids.includes(e.id));
-      if (!selEls.length) return setSel((s) => (s.ids.length ? { ids: [], rect: null, graph: null, live: null } : s));
+      if (!selEls.length) return setSel((s) => (s.ids.length ? { ids: [], rect: null, graph: null, live: null, image: null } : s));
       const [x1, y1, x2, y2] = getCommonBounds(selEls);
       const a = sceneCoordsToViewportCoords({ sceneX: x1, sceneY: y1 }, appState);
       const b = sceneCoordsToViewportCoords({ sceneX: x2, sceneY: y2 }, appState);
@@ -442,7 +449,8 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
         if (unchanged) return prev;
         const graph = (prev as any).key === key && prev.graph ? prev.graph : buildGraph(elements, ids);
         const live = selEls.length === 1 && selEls[0].type === "embeddable" && getMeta(selEls[0]) ? (selEls[0] as ExcalidrawEmbeddableElement) : null;
-        return { ids, rect, graph, live, key } as SelState;
+        const image = selEls.length === 1 && selEls[0].type === "image" && (selEls[0] as any).fileId ? (selEls[0] as ExcalidrawImageElement) : null;
+        return { ids, rect, graph, live, image, key } as SelState;
       });
     });
   }, []);
@@ -534,6 +542,23 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
     async (prompt: string, intent?: IntentId) => {
       const a = apiRef.current;
       if (!a || busy) return;
+      if (!intent && classifyPrompt(prompt) === "cutout") {
+        const sid = Object.keys(a.getAppState().selectedElementIds);
+        if (sid.length === 1 && a.getSceneElements().find((e) => e.id === sid[0])?.type === "image") intent = "cutout";
+      }
+      if (intent === "cutout") {
+        setBusy("Removing background…");
+        try {
+          await checkpoint("Before: remove background", "ai");
+          const msg = await cutoutRef.current();
+          say(msg, { undo: msg.startsWith("Background removed") });
+        } catch (e: any) {
+          say("Couldn't edit that image.", { note: String(e?.message ?? e).slice(0, 120) });
+        } finally {
+          setBusy(null);
+        }
+        return;
+      }
       const state = a.getAppState();
       const elements = a.getSceneElements();
       const ids = Object.keys(state.selectedElementIds).filter((k) => state.selectedElementIds[k]);
@@ -568,7 +593,20 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
         }
         const lm = liveSel ? getMeta(liveSel) : undefined;
         let plan: Plan & { note?: string };
-        if (intent === "ocr") {
+        if (intent === "palette") {
+          const img = await (async () => {
+            const { loadImage } = await import("./image/render");
+            return loadImage(URL.createObjectURL(await selectionBlob()));
+          })();
+          const c = document.createElement("canvas");
+          const k = Math.min(1, 200 / Math.max(img.width, img.height));
+          c.width = Math.max(1, Math.round(img.width * k));
+          c.height = Math.max(1, Math.round(img.height * k));
+          const cx = c.getContext("2d", { willReadFrequently: true })!;
+          cx.drawImage(img, 0, 0, c.width, c.height);
+          const colors = dominantColors(cx.getImageData(0, 0, c.width, c.height).data, 5);
+          plan = colors.length ? { say: `Pulled ${colors.length} colours from the image.`, ops: [{ op: "swatches", colors }], engine: "offline" } : { say: "No colours found in that image.", ops: [], engine: "offline" };
+        } else if (intent === "ocr") {
           setBusy("Reading text on-device…");
           const { recognize } = await import("./ocr/ocr");
           const r = await recognize(await selectionBlob());
@@ -658,6 +696,7 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
   };
 
   const actions = useMemo(() => {
+    if (sel.image && !liveEl) return [{ id: "editimg", label: "Edit image", icon: "◑", run: () => setEditImg(true) }];
     if (!liveEl || !liveMeta) return [];
     const list: { id: string; label: string; icon: string; run: () => void }[] = [];
     if (liveMeta.kind === "app") list.push({ id: "open", label: "Open", icon: "⤢", run: () => setExpanded({ id: liveEl.id }) });
@@ -674,7 +713,7 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
     });
     list.push({ id: "dup", label: "Duplicate", icon: "⧉", run: duplicateLive });
     return list;
-  }, [liveEl?.id, liveMeta?.kind, (liveMeta as any)?.state != null]);
+  }, [liveEl?.id, liveMeta?.kind, (liveMeta as any)?.state != null, sel.image?.id]);
 
   /* ───────── history ───────── */
   const openHistory = async () => {
@@ -782,6 +821,72 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
     return () => window.removeEventListener("keydown", k, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slide]);
+
+  const applyImage = (r: FinalImage, el: ExcalidrawImageElement | null = sel.image) => {
+    const a = apiRef.current;
+    if (!a || !el) return;
+    const fileId = uid("img");
+    a.addFiles([{ id: fileId, mimeType: r.mime as any, dataURL: r.dataURL as any, created: Date.now() } as any]);
+    // The pre-trim picture keeps its on-canvas width; a tight crop then shrinks the element so the subject
+    // stays exactly where (and as big as) it was, and the box hugs it — easy to grab and move.
+    const Wd = el.width;
+    const Hd = r.trim ? (Wd * r.trim.preH) / r.trim.preW : (Wd * r.h) / r.w;
+    const top = el.y + (el.height - Hd) / 2;
+    const t = r.trim ?? { x0: 0, y0: 0, x1: 1, y1: 1 };
+    a.updateScene({
+      elements: a.getSceneElementsIncludingDeleted().map((x) =>
+        x.id === el.id ? newElementWith(x, { fileId, x: el.x + Wd * t.x0, y: top + Hd * t.y0, width: Wd * (t.x1 - t.x0), height: Hd * (t.y1 - t.y0), crop: null, status: "saved" } as any) : x,
+      ),
+      captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+    });
+    setEditImg(false);
+  };
+
+  cutoutRef.current = () => cutout();
+  /** One click: remove the backdrop and crop to the subject. */
+  const cutout = async (): Promise<string> => {
+    const a = apiRef.current;
+    if (!a) return "Select an image first.";
+    const ids = Object.keys(a.getAppState().selectedElementIds).filter((k) => a.getAppState().selectedElementIds[k]);
+    const el = ids.length === 1 ? (a.getSceneElements().find((e) => e.id === ids[0] && e.type === "image") as ExcalidrawImageElement | undefined) : undefined;
+    const f = el && a.getFiles()[el.fileId as string];
+    if (!el || !f) return "Select an image first.";
+    const { loadImage, renderFinal } = await import("./image/render");
+    const { NEUTRAL } = await import("./image/adjust");
+    const img = await loadImage(f.dataURL);
+    let best = renderFinal(img, { ...NEUTRAL, bgTolerance: 24 }, f.mimeType);
+    if (best.removed < 0.03) best = renderFinal(img, { ...NEUTRAL, bgTolerance: 40 }, f.mimeType); // softer backdrops
+    if (best.removed < 0.03) return "I couldn't find a plain background to remove.";
+    if (best.removed > 0.97) return "The background is too similar to the subject to separate.";
+    applyImage(best, el);
+    return `Background removed — ${Math.round(best.removed * 100)}% cleared. Drag the subject anywhere.`;
+  };
+
+  const exportPdf = async () => {
+    const a = apiRef.current;
+    if (!a || !a.getSceneElements().length) return say("Nothing to export yet.");
+    try {
+      say("Building PDF…");
+      const frames = slides();
+      const common = { elements: a.getSceneElements(), files: a.getFiles(), maxWidthOrHeight: 2000 };
+      const appState = { exportBackground: true, viewBackgroundColor: "#ffffff", exportWithDarkMode: false } as any;
+      const pages = frames.length
+        ? await Promise.all(frames.map((f) => exportCanvasFrame({ ...common, appState, exportingFrame: f as any, exportPadding: 0 })))
+        : [await exportCanvasFrame({ ...common, appState, exportPadding: 32 })];
+      const { jsPDF } = await import("jspdf");
+      let pdf: InstanceType<typeof jsPDF> | null = null;
+      for (const c of pages) {
+        const o = c.width >= c.height ? "landscape" : "portrait";
+        if (!pdf) pdf = new jsPDF({ unit: "px", format: [c.width, c.height], orientation: o, hotfixes: ["px_scaling"] });
+        else pdf.addPage([c.width, c.height], o);
+        pdf.addImage(c.toDataURL("image/jpeg", 0.92), "JPEG", 0, 0, c.width, c.height);
+      }
+      pdf!.save(`${slugify(name)}.pdf`);
+      say(`Saved PDF (${pages.length} page${pages.length > 1 ? "s" : ""}).`, { note: frames.length ? "One page per frame." : "Frames become pages — draw some with F." });
+    } catch (e: any) {
+      say("Couldn't build the PDF.", { note: String(e?.message ?? e).slice(0, 120) });
+    }
+  };
 
   /* ───────── export / import ───────── */
   const exportMarkdown = () => {
@@ -892,6 +997,7 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
     { id: "live", label: room ? "Stop live sharing" : "Share live…", keywords: "collaborate realtime room", run: room ? leaveLive : shareLive },
     { id: "agent", label: "Connect an AI agent…", hint: "Claude Desktop, Cursor (MCP)", keywords: "mcp agent claude cursor", run: connectAgent },
     { id: "data", label: "Add data (CSV / JSON)…", keywords: "chart table csv", run: pickDataFile },
+    { id: "pdf", label: "Export as PDF", hint: "one page per frame", keywords: "print pdf", run: exportPdf },
     { id: "md", label: "Export as Markdown", run: exportMarkdown },
     { id: "jc", label: "Export as JSON Canvas", hint: "Obsidian", run: exportJsonCanvasFile },
     { id: "jci", label: "Import JSON Canvas…", hint: "Obsidian", run: importJsonCanvasFile },
@@ -1080,6 +1186,9 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
           </MainMenu.Item>
           <MainMenu.Item onSelect={() => setPanel("settings")}>Intelligence settings</MainMenu.Item>
           <MainMenu.Separator />
+          <MainMenu.Item onSelect={exportPdf} data-testid="export-pdf">
+            Export as PDF
+          </MainMenu.Item>
           <MainMenu.Item onSelect={exportMarkdown} data-testid="export-md">
             Export as Markdown
           </MainMenu.Item>
@@ -1190,6 +1299,10 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
       )}
 
       {agentDlg && room && <AgentDialog relay={settings.collabUrl} room={room} onClose={() => setAgentDlg(false)} />}
+      {editImg && sel.image && (() => {
+        const f = apiRef.current?.getFiles()[sel.image.fileId as string];
+        return f ? <ImageEditor src={f.dataURL} mime={f.mimeType} onApply={(r) => (applyImage(r, sel.image), say("Image updated.", { undo: true }))} onClose={() => setEditImg(false)} /> : null;
+      })()}
       {palette && <CommandPalette commands={commands} onAsk={(t) => run(t)} onClose={() => setPalette(false)} />}
       {gallery && <TemplateGallery templates={TEMPLATES_LIST} onPick={useTemplate} onClose={() => setGallery(false)} />}
       {panel === "history" && <HistoryPanel versions={versions} current={api?.getSceneElementsIncludingDeleted() ?? []} onRestore={restore} onSave={async (l) => (await checkpoint(l, "manual"), setVersions(await listVersions(meta.id)), say(`Saved checkpoint “${l}”.`))} onClose={() => setPanel(null)} />}

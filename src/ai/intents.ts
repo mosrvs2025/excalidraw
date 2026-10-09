@@ -14,7 +14,9 @@ export type IntentId =
   | "mermaid"
   | "ocr"
   | "refine"
-  | "data";
+  | "data"
+  | "palette"
+  | "cutout";
 
 export interface Suggestion {
   id: IntentId;
@@ -51,10 +53,19 @@ function suggestBase(g: CanvasGraph): Suggestion[] {
   const tab = g.items.find((i) => i.kind === "text" && looksTabular(i.text));
   if (tab) return [{ id: "data", icon: "▥", label: "Chart this data", prompt: "Turn this table into an interactive chart", primary: true }, { id: "notes", icon: "▤", label: "Split to notes", prompt: "Split this into separate sticky notes" }];
   if (mermaidIn(g)) return [{ id: "mermaid", icon: "◇", label: "Draw this diagram", prompt: "Render this Mermaid code as a diagram", primary: true }];
+  if (p.images === 1 && p.count === 1)
+    return [
+      { id: "cutout", icon: "✂", label: "Remove background", prompt: "Remove the background from this image", primary: true },
+      { id: "app", icon: "▶", label: "Make it real", prompt: "Build a working prototype of what this image shows" },
+      { id: "ocr", icon: "Aa", label: "Read text", prompt: "Read the text in this image" },
+      { id: "palette", icon: "◐", label: "Palette", prompt: "Extract the main colours of this image" },
+      { id: "explain", icon: "✦", label: "What is this?", prompt: "Describe what this is and suggest next steps" },
+    ];
   if (p.images + p.sketches > 0 && p.notes + p.texts + p.shapes === 0)
     return [
       { id: "app", icon: "▶", label: "Make it real", prompt: "Build a working prototype of what this sketch shows", primary: true },
       { id: "ocr", icon: "Aa", label: "Read text", prompt: "Read the text in this image" },
+      ...(g.items.some((i) => i.kind === "image") ? [{ id: "palette" as const, icon: "◐", label: "Palette", prompt: "Extract the main colours of this image" }] : []),
       { id: "explain", icon: "✦", label: "What is this?", prompt: "Describe what this is and suggest next steps" },
     ];
   const textual = p.outlineLines >= 2;
@@ -98,6 +109,7 @@ export function classifyPrompt(prompt: string): IntentId | null {
   const q = prompt.toLowerCase();
   const rules: [RegExp, IntentId][] = [
     [/\b(chart|graph|plot|table)\b.*\b(of|from|this|data|csv)\b|visuali[sz]e (this|the) data/, "data"],
+    [/(remove|delete|erase|cut ?out|get rid of).{0,20}(background|backdrop)|cutout|transparent background/, "cutout"],
     [/clean ?up|refine|snap|straighten (my|the)|neaten (my|the) (shapes|drawing)|make (it|them|this) (neat|clean|crisp)/, "refine"],
     [/mind ?-?map|brainstorm|expand|radial/, "mindmap"],
     [/review|critique|find (the )?(gaps|issues|problems|holes)|validate|audit|lint|what.?s missing|sanity/, "review"],

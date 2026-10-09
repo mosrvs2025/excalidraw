@@ -57,6 +57,7 @@ export type Op =
   | { op: "restyle"; ids: string[]; color: ColorName }
   | { op: "relayout"; layout: DiagramLayout }
   | { op: "refine"; ids?: string[] }
+  | { op: "swatches"; colors: string[] }
   | { op: "delete"; ids: string[] };
 
 export interface Plan {
@@ -204,6 +205,11 @@ export function sanitizePlan(raw: unknown): Plan {
       case "restyle": {
         const c = color(o.color);
         if (c) ops.push({ op: "restyle", ids: arr(o.ids).map(String), color: c });
+        break;
+      }
+      case "swatches": {
+        const colors = arr(o.colors).map(String).filter((c) => /^#[0-9a-f]{6}$/i.test(c)).slice(0, 12);
+        if (colors.length) ops.push({ op: "swatches", colors });
         break;
       }
       case "refine":

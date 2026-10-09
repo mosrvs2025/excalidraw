@@ -132,7 +132,7 @@ test.describe("drawing + context-aware intents", () => {
     await openApp(page);
     await page.locator('[data-testid="starter-flow"]').click();
     await page.locator('[data-testid="intent-explain"]').click();
-    await expect(page.locator('[data-testid="toast"]')).toBeVisible();
+    await expect.poll(async () => (await scene(page)).some((e) => e.kind === "answer")).toBe(true);
     const els = await scene(page);
     const ans = els.find((e) => e.kind === "answer")!;
     expect(ans).toBeTruthy();

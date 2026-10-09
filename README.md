@@ -38,6 +38,8 @@ It works **with no API key**. Add one (or deploy with a server key) and Claude t
 | **Data objects** | Drop a `.csv`/`.tsv`, paste a table into the prompt, or pick *Add data…*: you get a live **chart + table** (bar/line/pie auto-chosen, sortable columns, summary stats; choices are saved). Select CSV text on the canvas and *Chart this data* appears. |
 | **Agents as collaborators (MCP)** | *Connect an AI agent…* shows a ready-to-paste MCP config. Claude Desktop, Cursor or Claude Code join the board's live room as a peer: `read_board`, `add_notes`, `add_diagram`, `add_mermaid`, `add_data`, `add_doc`, `add_app`, `apply_plan`. Their changes are applied by an open browser, checkpointed, undoable and visible to everyone. |
 | **⌘K & templates** | A command palette for everything (anything unmatched runs as a prompt) and a 9-template gallery (Kanban, SWOT, retro, pros/cons, priority matrix, meeting notes, weekly planner, start-stop-continue, user journey). |
+| **Image tools** | Select an image: **Remove background** (one click — flood-fills the backdrop from the edges so light details *inside* the subject survive, feathers the edge, and crops the box tight so you can drag the subject anywhere), **Edit image** (brightness/contrast/saturation/blur, B&W/sepia/vivid/fade/invert, rotate/flip, live preview, one undo), and **Palette** (dominant colours → swatches). All on-device, no AI. |
+| **PDF export** | One page per frame (or the whole board). |
 | **Collab-ready architecture** | A `SyncAdapter` interface. Today's adapter is `BroadcastChannel`: live multi-tab collaboration with presence and cursors, using Excalidraw's `reconcileElements` for conflict-free merges. A WebSocket / Yjs adapter is a drop-in (`src/store/sync.ts`). |
 
 ---
@@ -143,8 +145,8 @@ Phone (390px): ![Mobile](docs/screenshots/13-mobile-clustered.png)
 ## Tests
 
 ```
-npm test            # 48 unit tests (+ relay, MCP summariser): planner, clustering, review, layout, placement, markdown, share links, schema sanitising, store, proxy, Claude payload
-npm run e2e         # 49 Playwright tests (incl. a real MCP client over stdio) (builds, serves, drives real Chromium): see e2e/*.spec.ts
+npm test            # 56 unit tests (+ relay, MCP summariser): planner, clustering, review, layout, placement, markdown, share links, schema sanitising, store, proxy, Claude payload
+npm run e2e         # 56 Playwright tests (incl. a real MCP client over stdio) (builds, serves, drives real Chromium): see e2e/*.spec.ts
 ```
 
 The e2e suite exercises real pointer drawing, every intent chip, undo, animated clustering, live-object interaction **inside the sandboxed iframe** (state round-trips into the element), sandbox isolation, reload persistence, version restore, multi-project switching, two-tab collaboration, a 390px touch viewport, and the Claude paths with the network mocked at the edge (BYO key payload incl. selection image, hosted proxy, graceful fallback, in-place app editing).

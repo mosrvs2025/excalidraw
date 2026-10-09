@@ -440,6 +440,7 @@ export function planOffline(req: IntentRequest): Plan {
     const code = mermaidIn(g);
     if (code) return { say: "Drew your Mermaid diagram.", ops: [{ op: "mermaid", code }], engine: "offline" };
   }
+  if (req.intent === "cutout") return { say: "Select an image first.", ops: [], engine: "offline" };
   if (req.intent === "refine") return { say: "", ops: [{ op: "refine" }], engine: "offline" };
   if (req.intent === "ocr") return { say: "Select an image or sketch first.", ops: [], engine: "offline" };
 

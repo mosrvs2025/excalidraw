@@ -23,6 +23,7 @@ import { edgePoint, findFreeSpot } from "./placement";
 import { recognizeStroke, type Pt } from "./shapes";
 import { parseMermaidFlow } from "./mermaidFlow";
 import { parseTable } from "../data/parse";
+import { inkFor } from "../image/palette";
 import { dataObject } from "../live/templates";
 
 /* Fonts: 5 = Excalifont (hand), 6 = Nunito (clean) */
@@ -693,6 +694,35 @@ export async function executePlan(
         const finalMade = made.map((e) => (e.id === arrow.id ? bound : e));
         ctx.els.push(...finalMade);
         ctx.created.push(...finalMade);
+        break;
+      }
+      case "swatches": {
+        const S = 130;
+        const GAP = 14;
+        const total = op.colors.length * S + (op.colors.length - 1) * GAP;
+        place(
+          (ox, oy) => ({
+            sk: op.colors.map((hex, i) => ({
+              type: "rectangle",
+              id: uid("sw"),
+              x: ox + i * (S + GAP),
+              y: oy,
+              width: S,
+              height: S,
+              backgroundColor: hex,
+              strokeColor: hex,
+              fillStyle: "solid",
+              roughness: 0,
+              roundness: { type: 3 },
+              label: { text: hex.toUpperCase(), fontSize: 16, fontFamily: FONT_CLEAN, strokeColor: inkFor(hex) },
+              customData: { lumen: { kind: "swatch" } },
+            })) as Sk[],
+            w: total,
+            h: S,
+            focus: [],
+          }),
+          () => ({ w: total, h: S }),
+        );
         break;
       }
       case "refine": {
