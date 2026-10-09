@@ -2,13 +2,15 @@ import { useEffect, useMemo, useRef } from "react";
 import type { ExcalidrawEmbeddableElement } from "@excalidraw/excalidraw/element/types";
 import { getMeta } from "../canvas/context";
 import { composeApp, renderMarkdown } from "./runtime";
+import { PortalView } from "../worlds/PortalView";
 
 /** iframe window → element id, so state saves from the sandbox can be routed to the right object. */
 export const frameRegistry = new Map<Window, string>();
 
-export function LiveObject({ element, theme }: { element: ExcalidrawEmbeddableElement; theme: "light" | "dark" }) {
+export function LiveObject({ element, theme, zoom = 1, viewW = 1280, viewH = 800 }: { element: ExcalidrawEmbeddableElement; theme: "light" | "dark"; zoom?: number; viewW?: number; viewH?: number }) {
   const meta = getMeta(element);
   if (!meta) return null;
+  if (meta.kind === ("portal" as any)) return <PortalView element={element} zoom={zoom} viewW={viewW} viewH={viewH} />;
   return (
     <div className={`lo lo-kind-${meta.kind}`}>
       <div className="lo-bar">

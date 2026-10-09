@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addVersion, createProject, deleteProject, diffScenes, listProjects, listVersions, loadProject, relativeTime, renameProject, saveProject } from "./projects";
+import { ancestorsOf, getMeta as getProjectMeta, getPreview, linkProject, savePreview, addVersion, createProject, deleteProject, diffScenes, listProjects, listVersions, loadProject, relativeTime, renameProject, saveProject } from "./projects";
 
 const el = (id: string, n = 1, extra: any = {}) => ({ id, versionNonce: n, isDeleted: false, ...extra });
 
@@ -29,5 +29,24 @@ describe("projects", () => {
   });
   it("formats relative time", () => {
     expect(relativeTime(1000, 1000 + 5 * 60_000)).toBe("5 min ago");
+  });
+});
+
+describe("worlds in the store", () => {
+  it("links parent/child, builds the trail, and deleting a board deletes its worlds + previews", async () => {
+    const root = await createProject("Root");
+    const planet = await createProject("Planet", undefined, { parentId: root.id, portalId: "p1" });
+    const town = await createProject("Town");
+    await linkProject(town.id, { parentId: planet.id, portalId: "p2" });
+    await savePreview(town.id, "data:image/jpeg;base64,AAAA");
+    expect((await getProjectMeta(planet.id))!.parentId).toBe(root.id);
+    expect(ancestorsOf(await listProjects(), town.id).map((p) => p.name)).toEqual(["Root", "Planet"]);
+    expect(await getPreview(town.id)).toContain("AAAA");
+    await deleteProject(root.id);
+    const left = (await listProjects()).map((p) => p.id);
+    expect(left).not.toContain(root.id);
+    expect(left).not.toContain(planet.id);
+    expect(left).not.toContain(town.id);
+    expect(await getPreview(town.id)).toBeUndefined();
   });
 });

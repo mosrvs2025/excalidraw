@@ -16,7 +16,8 @@ export type IntentId =
   | "refine"
   | "data"
   | "palette"
-  | "cutout";
+  | "cutout"
+  | "world";
 
 export interface Suggestion {
   id: IntentId;
@@ -43,6 +44,9 @@ export function suggestFor(g: CanvasGraph): Suggestion[] {
   // freehand strokes can always be cleaned into real shapes
   if (g.items.some((i) => i.kind === "sketch") && !list.some((s) => s.id === "refine") && !mermaidIn(g))
     list.push({ id: "refine", icon: "◇", label: "Clean up", prompt: "Turn my rough strokes into clean shapes" });
+  // anything can become a doorway: zoom into it and there's a whole new board
+  if (g.items.length && !g.items.every((i) => i.kind === "world"))
+    list.push({ id: "world", icon: "✦", label: "Make it a world", prompt: "Turn this into a world you can zoom into" });
   return list;
 }
 

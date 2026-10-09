@@ -19,7 +19,8 @@ export type ItemKind =
   | "doc"
   | "embed"
   | "frame"
-  | "flag";
+  | "flag"
+  | "world";
 
 export interface CanvasItem {
   alias: string;
@@ -49,7 +50,8 @@ export interface CanvasGraph {
 }
 
 export interface LumenMeta {
-  kind: "app" | "doc" | "note" | "flag" | "answer" | "title";
+  kind: "app" | "doc" | "note" | "flag" | "answer" | "title" | "portal";
+  childId?: string;
   title?: string;
   html?: string;
   markdown?: string;
@@ -149,7 +151,7 @@ export function buildGraph(
       case "embeddable":
         addItem(
           e,
-          meta?.kind === "app" ? "app" : meta?.kind === "doc" ? "doc" : "embed",
+          meta?.kind === "app" ? "app" : meta?.kind === "doc" ? "doc" : (meta?.kind as string) === "portal" ? "world" : "embed",
           meta?.title ?? "",
         );
         break;

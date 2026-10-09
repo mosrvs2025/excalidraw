@@ -18,7 +18,7 @@ import type { ExcalidrawElement, ExcalidrawEmbeddableElement, ExcalidrawImageEle
 import type { AppState, Collaborator, ExcalidrawImperativeAPI, SocketId } from "@excalidraw/excalidraw/types";
 
 import { buildGraph, getMeta, type CanvasGraph } from "./canvas/context";
-import { buildNotes, executePlan, insertSkeleton, LIVE_HOST, uid, type ExecResult } from "./canvas/execute";
+import { buildNotes, ensureFonts, executePlan, insertSkeleton, LIVE_HOST, uid, type ExecResult } from "./canvas/execute";
 import { runIntent, engineAvailable, serverHasClaude, type EngineKind } from "./ai/engine";
 import { classifyPrompt, suggestFor, type IntentId, type Suggestion } from "./ai/intents";
 import { loadSettings, markOnboarded, PROVIDERS, saveSettings, wasOnboarded, type Settings } from "./ai/settings";
@@ -29,7 +29,11 @@ import { LiveObject, frameRegistry } from "./live/LiveObject";
 import { composeApp } from "./live/runtime";
 import {
   addVersion,
+  ancestorsOf,
   Autosaver,
+  linkProject,
+  descendantsOf,
+  savePreview,
   createProject,
   deleteProject,
   getMeta as getProjectMeta,
@@ -53,25 +57,93 @@ import type { FinalImage } from "./image/render";
 import { dominantColors } from "./image/palette";
 import { exportToCanvas as exportCanvasFrame } from "@excalidraw/excalidraw";
 import { Dock } from "./ui/Dock";
-import { AgentDialog, CommandPalette, Expanded, HistoryPanel, LiveEditor, Onboarding, ProjectMenu, SettingsDialog, TemplateGallery, Welcome, type Command } from "./ui/Panels";
+import { AgentDialog, CommandPalette, Expanded, HistoryPanel, LiveEditor, Onboarding, ProjectMenu, RenameDialog, SettingsDialog, TemplateGallery, Welcome, type Command } from "./ui/Panels";
 import { TEMPLATES_LIST } from "./ai/local";
+import { worldBus, notifyPreview, touchWorld } from "./worlds/bus";
+import { withStandIns } from "./worlds/standins";
+import { coverage, exitProgress, fitZoom, shouldDive, shouldExit } from "./worlds/geometry";
 
 const CURRENT_KEY = "lumen:current";
 const isMobile = () => window.innerWidth < 700;
 
 /* ═════════════════════════ shell: project list + switching ═════════════════════════ */
 
-export default function App() {
-  const [boot, setBoot] = useState<{ projects: ProjectMeta[]; id: string; data: ProjectData } | null>(null);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-  const open = useCallback(async (id: string, list?: ProjectMeta[]) => {
+export default function App() {
+  const [boot, setBoot] = useState<{ projects: ProjectMeta[]; id: string; data: ProjectData; focusPortal?: string; arrival?: "down" | "up" } | null>(null);
+  const [veil, setVeil] = useState<null | { phase: "in" | "out"; dir: "down" | "up" }>(null);
+  const stack = useRef<{ id: string; portalId?: string }[]>([]); // where we came from, for the way back
+  const moving = useRef(false);
+  const bootRef = useRef(boot);
+  bootRef.current = boot;
+
+  const open = useCallback(async (id: string, list?: ProjectMeta[], extra: { focusPortal?: string; arrival?: "down" | "up" } = {}) => {
     const projects = list ?? (await listProjects());
     const data = (await loadProject(id)) ?? { elements: [], files: {} };
     try {
       localStorage.setItem(CURRENT_KEY, id);
     } catch {}
-    setBoot({ projects, id, data });
+    setBoot({ projects, id, data, ...extra });
   }, []);
+
+  const refreshProjects = useCallback(async () => {
+    const projects = await listProjects();
+    setBoot((b) => (b ? { ...b, projects } : b));
+  }, []);
+
+  /** Cross-fade between boards: warm veil in → swap → veil out while the new board eases in. */
+  const travel = useCallback(async (dir: "down" | "up", go: () => Promise<void>) => {
+    if (moving.current) return;
+    moving.current = true;
+    try {
+      setVeil({ phase: "in", dir });
+      await sleep(300);
+      await worldBus.flush(); // the world we're leaving saves + refreshes its preview first
+      await go();
+      setVeil({ phase: "out", dir });
+      await sleep(900);
+    } finally {
+      setVeil(null);
+      moving.current = false;
+    }
+  }, []);
+
+  const enterWorld = useCallback(
+    (childId: string, portalId: string) =>
+      travel("down", async () => {
+        const cur = bootRef.current!;
+        stack.current.push({ id: cur.id, portalId });
+        await open(childId, undefined, { arrival: "down" });
+      }),
+    [travel, open],
+  );
+  const exitWorld = useCallback(
+    () =>
+      travel("up", async () => {
+        const cur = bootRef.current!;
+        const meta = cur.projects.find((p) => p.id === cur.id);
+        const back = stack.current.pop() ?? (meta?.parentId ? { id: meta.parentId, portalId: meta.portalId } : null);
+        if (back) await open(back.id, undefined, { arrival: "up", focusPortal: back.portalId });
+      }),
+    [travel, open],
+  );
+  /** Jump straight to any board (breadcrumb): climbing up or opening elsewhere. */
+  const gotoBoard = useCallback(
+    (id: string) => {
+      const cur = bootRef.current!;
+      const path = [...ancestorsOf(cur.projects, cur.id), cur.projects.find((p) => p.id === cur.id)!];
+      const at = path.findIndex((p) => p.id === id);
+      stack.current = [];
+      if (at >= 0 && at < path.length - 1) {
+        // climbing: land looking at the doorway we came through
+        const portalId = path[at + 1].portalId;
+        return travel("up", () => open(id, undefined, { arrival: "up", focusPortal: portalId }));
+      }
+      return open(id);
+    },
+    [travel, open],
+  );
 
   useEffect(() => {
     (async () => {
@@ -101,32 +173,44 @@ export default function App() {
       try {
         id = localStorage.getItem(CURRENT_KEY) || "";
       } catch {}
-      if (!projects.some((p) => p.id === id)) id = projects[0].id;
+      if (!projects.some((p) => p.id === id)) id = projects.find((p) => !p.parentId)?.id ?? projects[0].id;
       await open(id, projects);
     })();
   }, [open]);
 
   if (!boot) return <div className="boot">Lumen</div>;
+  const topLevel = boot.projects.filter((p) => !p.parentId);
   return (
-    <Workspace
-      key={boot.id}
-      meta={boot.projects.find((p) => p.id === boot.id)!}
-      initial={boot.data}
-      projects={boot.projects}
-      onOpen={(id) => open(id)}
-      onNew={async () => {
-        const p = await createProject("Untitled");
-        await open(p.id);
-      }}
-      onDelete={async (id) => {
-        await deleteProject(id);
-        let rest = await listProjects();
-        if (!rest.length) rest = [await createProject("My first board")];
-        await open(id === boot.id ? rest[0].id : boot.id, rest);
-      }}
-      refresh={async () => setBoot((b) => (b ? { ...b } : b))}
-      reloadList={async () => setBoot((b) => (b ? b : b))}
-    />
+    <>
+      <Workspace
+        key={boot.id}
+        meta={boot.projects.find((p) => p.id === boot.id)!}
+        initial={boot.data}
+        projects={boot.projects}
+        trail={ancestorsOf(boot.projects, boot.id)}
+        arrival={boot.arrival}
+        focusPortal={boot.focusPortal}
+        onOpen={(id) => gotoBoard(id)}
+        onEnterWorld={enterWorld}
+        onExitWorld={exitWorld}
+        onWorldsChanged={refreshProjects}
+        onNew={async () => {
+          const p = await createProject("Untitled");
+          stack.current = [];
+          await open(p.id);
+        }}
+        onDelete={async (id) => {
+          await deleteProject(id);
+          let rest = await listProjects();
+          if (!rest.length) rest = [await createProject("My first board")];
+          const gone = new Set([id, ...descendantsOf(boot.projects, id)]);
+          stack.current = [];
+          await open(gone.has(boot.id) ? (rest.find((p) => !p.parentId) ?? rest[0]).id : boot.id, rest);
+        }}
+        topLevel={topLevel}
+      />
+      {veil && <div className={`veil ${veil.phase} ${veil.dir === "up" ? "up" : ""}`} aria-hidden data-testid="veil" />}
+    </>
   );
 }
 
@@ -136,11 +220,16 @@ interface WorkspaceProps {
   meta: ProjectMeta;
   initial: ProjectData;
   projects: ProjectMeta[];
+  topLevel: ProjectMeta[];
+  trail: ProjectMeta[];
+  arrival?: "down" | "up";
+  focusPortal?: string;
   onOpen: (id: string) => void;
+  onEnterWorld: (childId: string, portalId: string) => void;
+  onExitWorld: () => void;
+  onWorldsChanged: () => void;
   onNew: () => void;
   onDelete: (id: string) => void;
-  refresh: () => void;
-  reloadList: () => void;
 }
 
 interface SelState {
@@ -151,7 +240,7 @@ interface SelState {
   image: ExcalidrawImageElement | null;
 }
 
-function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: WorkspaceProps) {
+function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPortal, onOpen, onEnterWorld, onExitWorld, onWorldsChanged, onNew, onDelete }: WorkspaceProps) {
   const [api, setApi] = useState<ExcalidrawImperativeAPI | null>(null);
   const apiRef = useRef<ExcalidrawImperativeAPI | null>(null);
   const [theme, setTheme] = useState<"light" | "dark">(() => {
@@ -172,6 +261,8 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
   const [room, setRoomState] = useState<string | null>(() => roomOf(meta.id));
   const [link, setLink] = useState<"connecting" | "open" | "closed">("closed");
   const [palette, setPalette] = useState(false);
+  const [renameWorld, setRenameWorld] = useState<null | { id: string; name: string; portalId?: string }>(null);
+  const [exitHint, setExitHint] = useState(0);
   const [editImg, setEditImg] = useState(false);
   const [agentDlg, setAgentDlg] = useState(false);
   const [gallery, setGallery] = useState(false);
@@ -188,6 +279,7 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const autosaver = useRef(new Autosaver(450)).current;
+  const seenContent = useRef(initial.elements.length > 0);
   const lastSig = useRef(sceneSignature(initial.elements));
   const lastAutoVersion = useRef(Date.now());
   const dirtySinceVersion = useRef(false);
@@ -269,7 +361,7 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
       const els = a.getSceneElements();
       if (!els.length) return;
       const c = await exportToCanvas({
-        elements: els,
+        elements: withStandIns(els),
         appState: { exportBackground: true, viewBackgroundColor: themeRef.current === "dark" ? "#121212" : "#ffffff", exportWithDarkMode: themeRef.current === "dark" },
         files: a.getFiles(),
         maxWidthOrHeight: max,
@@ -297,6 +389,11 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
   const persist = useCallback(async () => {
     const a = apiRef.current;
     if (!a) return;
+    // Never overwrite saved work with an empty scene: that's what an unmounted/reset canvas looks like.
+    // (A user "clearing" the board leaves deleted elements behind, so a legitimate save is never length 0.)
+    const count = a.getSceneElementsIncludingDeleted().length;
+    if (count > 0) seenContent.current = true;
+    else if (seenContent.current) return;
     await saveProject(
       meta.id,
       { elements: a.getSceneElementsIncludingDeleted() as any, files: a.getFiles() as any, view: viewRef.current },
@@ -304,13 +401,18 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
     );
   }, [meta.id]);
 
+  const alive = useRef(true);
   useEffect(() => {
+    alive.current = true;
     const flush = () => void autosaver.flush();
+    const hidden = () => document.visibilityState === "hidden" && flush();
     window.addEventListener("pagehide", flush);
-    document.addEventListener("visibilitychange", () => document.visibilityState === "hidden" && flush());
+    document.addEventListener("visibilitychange", hidden);
     return () => {
       window.removeEventListener("pagehide", flush);
-      void autosaver.flush();
+      document.removeEventListener("visibilitychange", hidden);
+      void autosaver.flush().finally(() => autosaver.cancel()); // save once more, then make sure nothing fires later
+      alive.current = false;
     };
   }, [autosaver]);
 
@@ -455,6 +557,214 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
     });
   }, []);
 
+  const a_all = () => (apiRef.current?.getSceneElementsIncludingDeleted() ?? []) as ExcalidrawElement[];
+
+  /* ───────── worlds: zoom into a portal to enter another board; zoom far out to leave ───────── */
+  const prevZoom = useRef(initial.view?.zoom ?? 1);
+  const lockUntil = useRef(performance.now() + 1500); // no instant re-triggering right after arriving
+  const diving = useRef(false);
+  const projectsRef = useRef(projects);
+  projectsRef.current = projects;
+  const entryZoom = useRef<number | null>(null);
+  const exitHintRef = useRef(0);
+  const parent = trail[trail.length - 1];
+  const isPortal = (e: ExcalidrawElement): e is ExcalidrawEmbeddableElement => e.type === "embeddable" && (getMeta(e) as any)?.kind === "portal";
+
+  const previewOf = useCallback(async (max = 900): Promise<string | null> => {
+    const a = apiRef.current;
+    if (!a) return null;
+    const els = a.getSceneElements();
+    if (!els.length) return null;
+    const dark = themeRef.current === "dark";
+    const c = await exportToCanvas({ elements: withStandIns(els), appState: { exportBackground: true, viewBackgroundColor: dark ? "#121212" : "#ffffff", exportWithDarkMode: dark }, files: a.getFiles(), maxWidthOrHeight: max, exportPadding: 24 });
+    return c.toDataURL("image/jpeg", 0.82);
+  }, []);
+  const refreshPreview = useCallback(async () => {
+    try {
+      const url = await previewOf();
+      if (url) await savePreview(meta.id, url);
+      notifyPreview(meta.id, url);
+    } catch {}
+  }, [previewOf, meta.id]);
+  worldBus.flush = async () => {
+    await autosaver.flush();
+    await refreshPreview();
+  };
+
+  const diveInto = async (el: ExcalidrawEmbeddableElement, fast: boolean) => {
+    const a = apiRef.current;
+    if (!a || diving.current) return;
+    const childId = (getMeta(el) as any).childId as string | undefined;
+    if (!childId || !projectsRef.current.some((p) => p.id === childId)) return say("That world isn't on this device.", { note: "Worlds are stored where they were made." });
+    diving.current = true;
+    a.scrollToContent(el as any, { fitToViewport: true, viewportZoomFactor: 1, animate: true, duration: fast ? 380 : 700, maxZoom: 30 });
+    await sleep(fast ? 400 : 740);
+    onEnterWorld(childId, el.id);
+    setTimeout(() => (diving.current = false), 3000); // (the workspace is normally replaced by then)
+  };
+  worldBus.enter = (_childId, portalId) => {
+    const el = apiRef.current?.getSceneElements().find((e) => e.id === portalId);
+    if (el && isPortal(el)) void diveInto(el, false);
+  };
+
+  /** Called on every scene/view change: decide whether the zoom just crossed a threshold. */
+  const worldTick = (elements: readonly ExcalidrawElement[], st: AppState) => {
+    const z = st.zoom.value;
+    const prev = prevZoom.current;
+    prevZoom.current = z;
+    if (diving.current || slide !== null) return;
+    const view = { zoom: z, scrollX: st.scrollX, scrollY: st.scrollY, width: st.width, height: st.height };
+    const ready = performance.now() > lockUntil.current;
+    if (ready && z > prev) {
+      const hit = elements.find((e) => !e.isDeleted && isPortal(e) && shouldDive(e, view, prev));
+      if (hit) return void diveInto(hit as ExcalidrawEmbeddableElement, true);
+    }
+    if (meta.parentId && parent) {
+      const live = elements.filter((e) => !e.isDeleted);
+      let ref = entryZoom.current ?? 1;
+      if (live.length) {
+        const [x1, y1, x2, y2] = getCommonBounds(live);
+        ref = Math.min(ref, fitZoom({ x: x1, y: y1, width: x2 - x1, height: y2 - y1 }, view));
+      }
+      if (ready && shouldExit(z, prev, ref)) {
+        diving.current = true;
+        setTimeout(() => (diving.current = false), 3000);
+        return void onExitWorld();
+      }
+      const h = Math.round(exitProgress(z, ref) * 10) / 10;
+      if (h !== exitHintRef.current) setExitHint((exitHintRef.current = h));
+    }
+  };
+  const worldTickRef = useRef(worldTick);
+  worldTickRef.current = worldTick;
+
+  // arrival: frame the world we just entered, or settle back out in front of the doorway we came through
+  useEffect(() => {
+    if (!api) return;
+    lockUntil.current = performance.now() + 1500;
+    if (arrival === "down") api.scrollToContent(api.getSceneElements() as any, { fitToViewport: true, viewportZoomFactor: 0.85, animate: false, maxZoom: 4 });
+    if (arrival === "up" && focusPortal) {
+      const el = api.getSceneElements().find((e) => e.id === focusPortal);
+      if (el) {
+        api.scrollToContent(el as any, { fitToViewport: true, viewportZoomFactor: 0.98, animate: false, maxZoom: 30 });
+        setTimeout(() => api.scrollToContent(el as any, { fitToViewport: true, viewportZoomFactor: 0.5, animate: true, duration: 800, maxZoom: 30 }), 140);
+      }
+    }
+    const t = setTimeout(() => {
+      entryZoom.current = api.getAppState().zoom.value;
+      prevZoom.current = entryZoom.current;
+    }, arrival === "up" ? 1000 : 200);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api]);
+
+  /** Wrap the current selection (or nothing) into a brand-new world and leave a portal in its place. */
+  const makeWorld = async (fromSelection: boolean) => {
+    const a = apiRef.current;
+    if (!a) return;
+    const all = a.getSceneElementsIncludingDeleted();
+    const ids = new Set<string>();
+    if (fromSelection) {
+      const sel0 = Object.keys(a.getAppState().selectedElementIds).filter((k) => a.getAppState().selectedElementIds[k]);
+      for (const id of sel0) {
+        const e = all.find((x) => x.id === id);
+        if (!e || e.isDeleted) continue;
+        ids.add(id);
+        if (e.type === "frame" || e.type === "magicframe") all.filter((c) => c.frameId === e.id).forEach((c) => ids.add(c.id));
+      }
+      for (const e of all) if ((e as any).containerId && ids.has((e as any).containerId)) ids.add(e.id); // bound text
+      for (const e of all) if (!e.isDeleted && e.boundElements?.some((b) => b.type === "text" && ids.has(b.id)) && !ids.has(e.id)) ids.add(e.id);
+    }
+    const moved = all.filter((e) => ids.has(e.id) && !e.isDeleted);
+    if (fromSelection && !moved.length) return say("Select something to turn into a world.");
+    if (moved.some(isPortal) && moved.length === 1) return say("That's already a world — zoom into it.");
+    await checkpoint(fromSelection ? "Before: make a world" : "Before: new world", "ai");
+    const c = sceneCenter(a);
+    const [x1, y1, x2, y2] = moved.length ? getCommonBounds(moved) : [c.x - 180, c.y - 130, c.x + 180, c.y + 130];
+    const PAD = moved.length ? 28 : 0;
+    const w = Math.max(260, x2 - x1 + PAD * 2);
+    const h = Math.max(190, y2 - y1 + PAD * 2);
+    const px = (x1 + x2) / 2 - w / 2;
+    const py = (y1 + y2) / 2 - h / 2;
+    const guess = moved.map((e) => (e as any).originalText ?? (e as any).text).find((t) => typeof t === "string" && t.trim());
+    const name = (guess ? String(guess).replace(/\s+/g, " ").trim().slice(0, 28) : "New world") || "New world";
+    const portalId = uid("w");
+    const files = a.getFiles();
+    const usedFiles = Object.fromEntries(moved.filter((e) => e.type === "image" && (e as any).fileId).map((e) => [(e as any).fileId, files[(e as any).fileId]]).filter(([, f]) => f));
+    const child = await createProject(name, { elements: JSON.parse(JSON.stringify(moved)), files: usedFiles }, { parentId: meta.id, portalId });
+    const [portal] = restoreElements(
+      [{ type: "embeddable", id: portalId, x: px, y: py, width: w, height: h, link: `${LIVE_HOST}/o/${portalId}`, strokeColor: "#7048e8", strokeWidth: 2, backgroundColor: "transparent", roundness: { type: 3 }, customData: { lumen: { kind: "portal", title: name, childId: child.id } } } as any],
+      null,
+    );
+    // arrows that pointed into the moved group now point at the doorway
+    let boundArrows: { id: string; type: "arrow" }[] = [];
+    const next = all.map((e) => {
+      if (ids.has(e.id) && !e.isDeleted) return newElementWith(e, { isDeleted: true });
+      if (e.type === "arrow" && !e.isDeleted) {
+        const sb = (e as any).startBinding?.elementId;
+        const eb = (e as any).endBinding?.elementId;
+        if ((sb && ids.has(sb)) || (eb && ids.has(eb))) {
+          boundArrows.push({ id: e.id, type: "arrow" });
+          return newElementWith(e, { startBinding: sb && ids.has(sb) ? { ...(e as any).startBinding, elementId: portalId } : (e as any).startBinding, endBinding: eb && ids.has(eb) ? { ...(e as any).endBinding, elementId: portalId } : (e as any).endBinding } as any);
+        }
+      }
+      return e;
+    });
+    const portalWithArrows = boundArrows.length ? newElementWith(portal, { boundElements: boundArrows } as any) : portal;
+    a.updateScene({ elements: [...next, portalWithArrows], appState: { selectedElementIds: { [portalId]: true } } as any, captureUpdate: CaptureUpdateAction.IMMEDIATELY });
+    // the portal should look exactly like what was there: give the new world its preview straight away
+    try {
+      if (moved.length) {
+        const dark = themeRef.current === "dark";
+        const cv = await exportToCanvas({ elements: withStandIns(moved), appState: { exportBackground: true, viewBackgroundColor: dark ? "#121212" : "#ffffff", exportWithDarkMode: dark }, files: usedFiles as any, maxWidthOrHeight: 900, exportPadding: 24 });
+        const url = cv.toDataURL("image/jpeg", 0.82);
+        await savePreview(child.id, url);
+        notifyPreview(child.id, url);
+      } else notifyPreview(child.id, null);
+    } catch {}
+    onWorldsChanged();
+    say(fromSelection ? `“${name}” is now a world.` : "A new world.", { note: "Zoom into it — or press Enter ↘ — and draw anything inside.", undo: true });
+  };
+
+  /** A tiny three-level universe so the idea lands in ten seconds. */
+  const worldsDemo = async () => {
+    const a = apiRef.current;
+    if (!a) return;
+    const c = sceneCenter(a);
+    await ensureFonts("Zoom into the planet Main Street Café Bookshop");
+    const mk = (sk: any[]) => convertToExcalidrawElements(sk, { regenerateIds: false });
+    const portalSk = (id: string, x: number, y: number, w: number, h: number, title: string, childId: string) =>
+      restoreElements([{ type: "embeddable", id, x, y, width: w, height: h, link: `${LIVE_HOST}/o/${id}`, strokeColor: "#7048e8", strokeWidth: 2, backgroundColor: "transparent", roundness: { type: 3 }, customData: { lumen: { kind: "portal", title, childId } } } as any], null);
+    const snap = async (els: any[], id: string) => {
+      const dark = themeRef.current === "dark";
+      const cv = await exportToCanvas({ elements: withStandIns(els), appState: { exportBackground: true, viewBackgroundColor: dark ? "#121212" : "#ffffff", exportWithDarkMode: dark }, files: {}, maxWidthOrHeight: 900, exportPadding: 24 });
+      const url = cv.toDataURL("image/jpeg", 0.82);
+      await savePreview(id, url);
+      notifyPreview(id, url);
+    };
+    // level 3: a street
+    const notes = buildNotes({ op: "notes", title: "Main Street", items: [{ text: "Café — best flat white in town" }, { text: "Bookshop (open late)" }, { text: "Park bench: sit, zoom out, breathe" }] }, 0, 0);
+    const streetEls = mk(notes.sk);
+    const street = await createProject("Main Street", { elements: streetEls, files: {} }, { parentId: meta.id });
+    // level 2: a planet with the street as a tiny town
+    const townId = uid("w");
+    const planetText = mk([{ type: "text", x: 0, y: 0, text: "Little planet 🌍", fontSize: 36, fontFamily: 6 } as any, { type: "text", x: 0, y: 70, text: "Zoom into the town ↓", fontSize: 22, fontFamily: 5 } as any]);
+    const planetEls = [...planetText, ...portalSk(townId, 40, 130, 340, 230, "Main Street", street.id)];
+    const planet = await createProject("Little planet", { elements: planetEls, files: {} }, { parentId: meta.id });
+    await snap(planetEls, planet.id);
+    await snap(streetEls, street.id);
+    // level 1: here
+    const planetId = uid("w");
+    const title = mk([{ type: "text", x: c.x - 230, y: c.y - 230, text: "Worlds inside worlds", fontSize: 40, fontFamily: 6 } as any, { type: "text", x: c.x - 230, y: c.y - 170, text: "Zoom into the planet — scroll or pinch — and keep going ↘", fontSize: 20, fontFamily: 5 } as any]);
+    const portal = portalSk(planetId, c.x - 140, c.y - 110, 280, 210, "Little planet", planet.id);
+    a.updateScene({ elements: [...a.getSceneElementsIncludingDeleted(), ...title, ...portal], appState: { selectedElementIds: { [planetId]: true } } as any, captureUpdate: CaptureUpdateAction.IMMEDIATELY });
+    // wire the real parent links now that every id exists
+    await linkProject(street.id, { parentId: planet.id, portalId: townId });
+    await linkProject(planet.id, { parentId: meta.id, portalId: planetId });
+    onWorldsChanged();
+    say("Zoom into the planet.", { note: "Scroll, pinch, or select it and press Enter ↘ — worlds nest as deep as you like." });
+  };
+
   /* ───────── onChange: persist, version, sync ───────── */
   const onChange = useCallback(
     (elements: readonly ExcalidrawElement[], appState: AppState) => {
@@ -462,7 +772,9 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
         themeRef.current = appState.theme as "light" | "dark";
         setTheme(appState.theme as "light" | "dark");
       }
+      if (!alive.current) return; // this board has been left; ignore the canvas's death throes
       updateSelection(elements, appState);
+      worldTickRef.current(elements, appState);
       const view = { scrollX: appState.scrollX, scrollY: appState.scrollY, zoom: appState.zoom.value };
       const viewChanged = !viewRef.current || viewRef.current.scrollX !== view.scrollX || viewRef.current.scrollY !== view.scrollY || viewRef.current.zoom !== view.zoom;
       viewRef.current = view;
@@ -498,6 +810,15 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
         e.preventDefault();
         e.stopPropagation(); // beats Excalidraw's own ⌘K (link) handler
         setPalette((p) => !p);
+      } else if (e.altKey && e.key === "ArrowUp" && parent && !typing) {
+        e.preventDefault();
+        void onExitWorld();
+      } else if (e.altKey && e.key === "ArrowDown" && !typing) {
+        e.preventDefault();
+        const a = apiRef.current;
+        const ids = a ? Object.keys(a.getAppState().selectedElementIds) : [];
+        const el = a?.getSceneElements().find((x) => ids.includes(x.id) && isPortal(x));
+        if (el) void diveInto(el as ExcalidrawEmbeddableElement, false);
       } else if (e.key === "/" && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
         inputRef.current?.focus();
@@ -542,6 +863,10 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
     async (prompt: string, intent?: IntentId) => {
       const a = apiRef.current;
       if (!a || busy) return;
+      if (intent === "world") {
+        await makeWorld(true);
+        return;
+      }
       if (!intent && classifyPrompt(prompt) === "cutout") {
         const sid = Object.keys(a.getAppState().selectedElementIds);
         if (sid.length === 1 && a.getSceneElements().find((e) => e.id === sid[0])?.type === "image") intent = "cutout";
@@ -696,6 +1021,11 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
   };
 
   const actions = useMemo(() => {
+    if (liveEl && (liveMeta as any)?.kind === "portal")
+      return [
+        { id: "enter", label: "Enter", icon: "↘", run: () => void diveInto(liveEl, false) },
+        { id: "rename", label: "Rename", icon: "✎", run: () => setRenameWorld({ id: (liveMeta as any).childId, name: (liveMeta as any).title ?? "", portalId: liveEl.id }) },
+      ];
     if (sel.image && !liveEl) return [{ id: "editimg", label: "Edit image", icon: "◑", run: () => setEditImg(true) }];
     if (!liveEl || !liveMeta) return [];
     const list: { id: string; label: string; icon: string; run: () => void }[] = [];
@@ -868,7 +1198,7 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
     try {
       say("Building PDF…");
       const frames = slides();
-      const common = { elements: a.getSceneElements(), files: a.getFiles(), maxWidthOrHeight: 2000 };
+      const common = { elements: withStandIns(a.getSceneElements()), files: a.getFiles(), maxWidthOrHeight: 2000 };
       const appState = { exportBackground: true, viewBackgroundColor: "#ffffff", exportWithDarkMode: false } as any;
       const pages = frames.length
         ? await Promise.all(frames.map((f) => exportCanvasFrame({ ...common, appState, exportingFrame: f as any, exportPadding: 0 })))
@@ -990,6 +1320,10 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
   }, []);
 
   const commands: Command[] = [
+    { id: "newworld", label: "New world here", hint: "a doorway to a fresh board", keywords: "portal zoom nested infinite", run: () => makeWorld(false) },
+    { id: "makeworld", label: "Make selection a world", hint: "zoom into what you drew", keywords: "portal zoom nested infinite", run: () => makeWorld(true) },
+    ...(parent ? [{ id: "up", label: `Go up to ${parent.name}`, hint: "Alt+↑", keywords: "back exit world", run: () => void onExitWorld() }] : []),
+    { id: "worldsdemo", label: "Worlds demo", hint: "a tiny universe to zoom through", keywords: "portal nested infinite zoom", run: () => void worldsDemo() },
     { id: "templates", label: "Templates…", hint: "kanban, SWOT, retro…", keywords: "template board scaffold start", run: () => setGallery(true) },
     { id: "present", label: "Present", hint: "frames → slides", keywords: "slides presentation", run: present },
     { id: "history", label: "Version history", keywords: "restore undo checkpoint", run: openHistory },
@@ -1010,9 +1344,10 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
   ];
 
   /* ───────── starters ───────── */
-  const starter = (kind: "braindump" | "flow" | "outline" | "timer") => {
+  const starter = (kind: "braindump" | "flow" | "outline" | "timer" | "worlds") => {
     const a = apiRef.current;
     if (!a) return;
+    if (kind === "worlds") return void worldsDemo();
     const c = sceneCenter(a);
     if (kind === "braindump") {
       const texts = ["Pricing page redesign", "Welcome email sequence", "Offline mode for the mobile app", "Annual discount for teams", "Onboarding checklist for new users", "Push notifications on mobile", "Pricing experiment: usage-based tiers", "Onboarding video walkthrough", "Mobile dark mode", "Fix login timeout bug", "Crash when uploading large images", "Referral program rewards"];
@@ -1089,7 +1424,9 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
 
   /* ───────── derived UI ───────── */
   const suggestions: Suggestion[] = useMemo(() => (sel.graph && !liveEl ? suggestFor(sel.graph) : []), [sel.graph, liveEl]);
-  const placeholder = liveEl
+  const placeholder = (liveMeta as any)?.kind === "portal"
+    ? "A world — zoom in to step inside"
+    : liveEl
     ? liveMeta?.kind === "app"
       ? "Change this… e.g. “add a reset button”"
       : "Change this document…"
@@ -1103,7 +1440,7 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
   const expandedEl = expanded ? (api?.getSceneElements().find((e) => e.id === expanded.id) as ExcalidrawEmbeddableElement | undefined) : undefined;
 
   return (
-    <div className={`app ${mobile ? "is-mobile" : ""} ${slide !== null ? "presenting" : ""}`} data-theme={theme}>
+    <div className={`app ${mobile ? "is-mobile" : ""} ${slide !== null ? "presenting" : ""} ${arrival ? `arrive-${arrival === "down" ? "in" : "out"}` : ""}`} data-theme={theme}>
       <Excalidraw
         excalidrawAPI={(a) => {
           apiRef.current = a;
@@ -1133,7 +1470,7 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
           s.publish({ t: "pointer", from: s.id, x: p.pointer.x, y: p.pointer.y, tool: p.pointer.tool, name: identity.name, color: identity.color });
         }}
         validateEmbeddable={(link) => link.startsWith(LIVE_HOST) || /^https:\/\/(www\.)?(youtube\.com|youtu\.be|vimeo\.com|figma\.com)/.test(link)}
-        renderEmbeddable={(el) => (getMeta(el) ? <LiveObject element={el} theme={theme} /> : null)}
+        renderEmbeddable={(el, st) => (getMeta(el) ? <LiveObject element={el} theme={theme} zoom={st.zoom.value} viewW={st.width} viewH={st.height} /> : null)}
         renderTopRightUI={() => slide !== null ? null : (
           <div className="topright" onPointerDown={(e) => e.stopPropagation()}>
             {peers.length > 0 && (
@@ -1169,6 +1506,9 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
           <MainMenu.Item onSelect={onNew}>New project</MainMenu.Item>
           <MainMenu.Item onSelect={room ? leaveLive : shareLive} data-testid="share-live">
             {room ? "Stop live sharing" : "Share live…"}
+          </MainMenu.Item>
+          <MainMenu.Item onSelect={() => makeWorld(false)} data-testid="new-world">
+            New world here ✦
           </MainMenu.Item>
           <MainMenu.Item onSelect={() => setGallery(true)} data-testid="templates">
             Templates…
@@ -1213,13 +1553,27 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
         </MainMenu>
       </Excalidraw>
 
-      {slide === null && <div className="pill" onPointerDown={(e) => e.stopPropagation()}>
-        <span className="logo" aria-hidden />
+      {slide === null && <div className={`pill ${meta.parentId ? "in-world" : ""}`} onPointerDown={(e) => e.stopPropagation()}>
+        <button className="logo-btn" onClick={() => setPanel(panel === "projects" ? null : "projects")} aria-label="Boards" title="Boards">
+          <span className="logo" aria-hidden />
+        </button>
+        {trail.length > 0 && (
+          <nav className="trail" aria-label="Worlds">
+            {(trail.length > 2 ? [{ id: trail[0].id, name: "⋯", title: trail.map((t) => t.name).join(" › ") }, trail[trail.length - 1]] : trail).map((t) => (
+              <span key={t.id + t.name} className="crumb">
+                <button onClick={() => onOpen(t.id)} title={(t as any).title ?? `Back to ${t.name}`} data-testid="crumb">
+                  {t.name}
+                </button>
+                <span className="sep">›</span>
+              </span>
+            ))}
+          </nav>
+        )}
         {renaming ? (
           <input
             autoFocus
             defaultValue={name}
-            aria-label="Project name"
+            aria-label="Name"
             onKeyDown={(e) => {
               e.stopPropagation();
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
@@ -1230,18 +1584,21 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
               setName(v);
               setRenaming(false);
               await renameProject(meta.id, v);
+              touchWorld(meta.id);
+              onWorldsChanged();
             }}
           />
         ) : (
-          <button className="name" onDoubleClick={() => setRenaming(true)} onClick={() => setPanel(panel === "projects" ? null : "projects")} title="Projects (double-click to rename)" data-testid="project-name">
+          <button className={`name ${meta.parentId ? "here" : ""}`} onDoubleClick={() => setRenaming(true)} onClick={() => (meta.parentId ? setRenaming(true) : setPanel(panel === "projects" ? null : "projects"))} title={meta.parentId ? "Rename this world" : "Boards (double-click to rename)"} data-testid="project-name">
             {name}
-            <span className="caret">▾</span>
+            {!meta.parentId && <span className="caret">▾</span>}
           </button>
         )}
         {panel === "projects" && (
           <ProjectMenu
-            projects={projects.map((p) => (p.id === meta.id ? { ...p, name } : p))}
-            currentId={meta.id}
+            projects={topLevel.map((p) => (p.id === meta.id ? { ...p, name } : p))}
+            worldCounts={Object.fromEntries(topLevel.map((p) => [p.id, descendantsOf(projects, p.id).length]))}
+            currentId={(trail[0] ?? meta).id}
             onOpen={async (id) => (await autosaver.flush(), onOpen(id))}
             onNew={async () => (await autosaver.flush(), onNew())}
             onDelete={onDelete}
@@ -1249,6 +1606,18 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
           />
         )}
       </div>}
+
+      {exitHint > 0.15 && parent && slide === null && (
+        <div className="exit-hint" style={{ opacity: Math.min(1, exitHint * 1.2) }} aria-hidden>
+          ↑ Keep zooming out to return to <b>{parent.name}</b>
+        </div>
+      )}
+      {empty && meta.parentId && slide === null && !busy && (
+        <div className="world-hint" data-testid="world-hint">
+          <b>A new world</b>
+          Draw anything. Zoom out to go back to {parent?.name ?? "where you were"}.
+        </div>
+      )}
 
       {slide !== null && (
         <div className="present-bar" onPointerDown={(e) => e.stopPropagation()} data-testid="present-bar">
@@ -1267,7 +1636,7 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
         </div>
       )}
 
-      {empty && slide === null && !busy && <Welcome onStarter={starter} onFocus={() => inputRef.current?.focus()} />}
+      {empty && !meta.parentId && slide === null && !busy && <Welcome onStarter={starter} onFocus={() => inputRef.current?.focus()} />}
 
       {busy && sel.rect && <div className="scan" style={{ left: sel.rect.x - 8, top: sel.rect.y - 8, width: sel.rect.w + 16, height: sel.rect.h + 16 }} />}
 
@@ -1303,6 +1672,23 @@ function Workspace({ meta, initial, projects, onOpen, onNew, onDelete }: Workspa
         const f = apiRef.current?.getFiles()[sel.image.fileId as string];
         return f ? <ImageEditor src={f.dataURL} mime={f.mimeType} onApply={(r) => (applyImage(r, sel.image), say("Image updated.", { undo: true }))} onClose={() => setEditImg(false)} /> : null;
       })()}
+      {renameWorld && (
+        <RenameDialog
+          value={renameWorld.name}
+          title="Rename world"
+          onSave={async (v) => {
+            await renameProject(renameWorld.id, v);
+            touchWorld(renameWorld.id);
+            if (renameWorld.portalId) {
+              const els = a_all();
+              apiRef.current?.updateScene({ elements: els.map((x) => (x.id === renameWorld.portalId ? newElementWith(x, { customData: { ...x.customData, lumen: { ...x.customData?.lumen, title: v } } }) : x)), captureUpdate: CaptureUpdateAction.IMMEDIATELY });
+            }
+            onWorldsChanged();
+            setRenameWorld(null);
+          }}
+          onClose={() => setRenameWorld(null)}
+        />
+      )}
       {palette && <CommandPalette commands={commands} onAsk={(t) => run(t)} onClose={() => setPalette(false)} />}
       {gallery && <TemplateGallery templates={TEMPLATES_LIST} onPick={useTemplate} onClose={() => setGallery(false)} />}
       {panel === "history" && <HistoryPanel versions={versions} current={api?.getSceneElementsIncludingDeleted() ?? []} onRestore={restore} onSave={async (l) => (await checkpoint(l, "manual"), setVersions(await listVersions(meta.id)), say(`Saved checkpoint “${l}”.`))} onClose={() => setPanel(null)} />}

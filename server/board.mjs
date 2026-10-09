@@ -28,7 +28,7 @@ export function summarizeBoard(map) {
       kind = meta?.kind === "lane" ? "lane" : meta?.kind === "note" || meta?.kind === "answer" ? "note" : e.type === "diamond" ? "decision" : "shape";
       if (kind === "lane" && !text) continue;
     } else if (e.type === "text") (kind = "text"), (text = e.originalText ?? e.text);
-    else if (e.type === "embeddable" && meta) (kind = meta.kind === "doc" ? "document" : "live-app"), (text = meta.title ?? "");
+    else if (e.type === "embeddable" && meta) (kind = meta.kind === "doc" ? "document" : meta.kind === "portal" ? "world" : "live-app"), (text = meta.title ?? "");
     else if (e.type === "frame") (kind = "frame"), (text = e.name ?? "");
     items.push({ id: e.id, kind, text: text.replace(/\s*\n\s*/g, " ").slice(0, 300), x: Math.round(e.x), y: Math.round(e.y), w: Math.round(e.width), h: Math.round(e.height) });
   }

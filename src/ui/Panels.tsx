@@ -323,12 +323,14 @@ export function Expanded({ title, html, state, theme, onClose }: { title: string
 export function ProjectMenu({
   projects,
   currentId,
+  worldCounts = {},
   onOpen,
   onNew,
   onDelete,
   onClose,
 }: {
   projects: ProjectMeta[];
+  worldCounts?: Record<string, number>;
   currentId: string;
   onOpen: (id: string) => void;
   onNew: () => void;
@@ -348,7 +350,7 @@ export function ProjectMenu({
               <span>
                 <strong>{p.name}</strong>
                 <small>
-                  {p.count} objects · {relativeTime(p.updatedAt)}
+                  {p.count} objects{worldCounts[p.id] ? ` · ✦ ${worldCounts[p.id]} world${worldCounts[p.id] > 1 ? "s" : ""}` : ""} · {relativeTime(p.updatedAt)}
                 </small>
               </span>
             </button>
@@ -366,7 +368,7 @@ export function ProjectMenu({
 
 /* ───────── empty-canvas starters ───────── */
 
-export function Welcome({ onStarter, onFocus }: { onStarter: (id: "braindump" | "flow" | "outline" | "timer") => void; onFocus: () => void }) {
+export function Welcome({ onStarter, onFocus }: { onStarter: (id: "braindump" | "flow" | "outline" | "timer" | "worlds") => void; onFocus: () => void }) {
   return (
     <div className="welcome" onPointerDown={(e) => e.stopPropagation()}>
       <h1>
@@ -374,6 +376,10 @@ export function Welcome({ onStarter, onFocus }: { onStarter: (id: "braindump" | 
       </h1>
       <p>Draw, drop notes, or paste anything. The canvas understands what you make and offers the next move — no chat box required.</p>
       <div className="starters">
+        <button className="featured" onClick={() => onStarter("worlds")} data-testid="starter-worlds">
+          <b>✦ Worlds inside worlds</b>
+          <span>Zoom into a planet, then a town, then a street — every drawing can be a doorway to another board</span>
+        </button>
         <button onClick={() => onStarter("braindump")} data-testid="starter-braindump">
           <b>▦ Messy brain-dump</b>
           <span>12 loose notes → watch them organise themselves</span>
@@ -511,6 +517,31 @@ export function AgentDialog({ relay, room, onClose }: { relay: string; room: str
           </button>
         </footer>
       </div>
+    </Modal>
+  );
+}
+
+export function RenameDialog({ value, title, onSave, onClose }: { value: string; title: string; onSave: (v: string) => void; onClose: () => void }) {
+  const [v, setV] = useState(value);
+  return (
+    <Modal title={title} onClose={onClose}>
+      <form
+        className="form"
+        onSubmit={(e) => {
+          e.preventDefault();
+          onSave(v.trim() || "Untitled");
+        }}
+      >
+        <input autoFocus value={v} onChange={(e) => setV(e.target.value)} onKeyDown={(e) => e.stopPropagation()} data-testid="rename-input" aria-label="Name" />
+        <footer>
+          <button type="button" className="btn" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn primary" data-testid="rename-save">
+            Save
+          </button>
+        </footer>
+      </form>
     </Modal>
   );
 }

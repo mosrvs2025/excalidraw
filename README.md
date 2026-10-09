@@ -40,6 +40,7 @@ It works **with no API key**. Add one (or deploy with a server key) and Claude t
 | **⌘K & templates** | A command palette for everything (anything unmatched runs as a prompt) and a 9-template gallery (Kanban, SWOT, retro, pros/cons, priority matrix, meeting notes, weekly planner, start-stop-continue, user journey). |
 | **Image tools** | Select an image: **Remove background** (one click — flood-fills the backdrop from the edges so light details *inside* the subject survive, feathers the edge, and crops the box tight so you can drag the subject anywhere), **Edit image** (brightness/contrast/saturation/blur, B&W/sepia/vivid/fade/invert, rotate/flip, live preview, one undo), and **Palette** (dominant colours → swatches). All on-device, no AI. |
 | **PDF export** | One page per frame (or the whole board). |
+| **Worlds (infinite zoom)** | Any drawing can become a doorway: select it → **Make it a world** (or *New world here*). A portal shows a living preview of the board inside; **zoom into it and you step through** (warm veil, soft arrival), zoom far back out and you return, looking at the doorway you came through. A trail shows where you are (*Home › Planet › Town*), worlds nest as deep as you like, and each is an ordinary board (history, templates, AI, export all work inside). Also: *Enter ↘* / Alt+↓, Alt+↑ to go up, a "keep zooming out" cue as you approach the edge, and a ✦ demo universe on first run. |
 | **Collab-ready architecture** | A `SyncAdapter` interface. Today's adapter is `BroadcastChannel`: live multi-tab collaboration with presence and cursors, using Excalidraw's `reconcileElements` for conflict-free merges. A WebSocket / Yjs adapter is a drop-in (`src/store/sync.ts`). |
 
 ---
@@ -145,8 +146,8 @@ Phone (390px): ![Mobile](docs/screenshots/13-mobile-clustered.png)
 ## Tests
 
 ```
-npm test            # 56 unit tests (+ relay, MCP summariser): planner, clustering, review, layout, placement, markdown, share links, schema sanitising, store, proxy, Claude payload
-npm run e2e         # 56 Playwright tests (incl. a real MCP client over stdio) (builds, serves, drives real Chromium): see e2e/*.spec.ts
+npm test            # 63 unit tests (+ relay, MCP summariser): planner, clustering, review, layout, placement, markdown, share links, schema sanitising, store, proxy, Claude payload
+npm run e2e         # 62 Playwright tests (incl. a real MCP client over stdio) (builds, serves, drives real Chromium): see e2e/*.spec.ts
 ```
 
 The e2e suite exercises real pointer drawing, every intent chip, undo, animated clustering, live-object interaction **inside the sandboxed iframe** (state round-trips into the element), sandbox isolation, reload persistence, version restore, multi-project switching, two-tab collaboration, a 390px touch viewport, and the Claude paths with the network mocked at the edge (BYO key payload incl. selection image, hosted proxy, graceful fallback, in-place app editing).
@@ -158,5 +159,6 @@ The e2e suite exercises real pointer drawing, every intent chip, undo, animated 
 - **OCR is best on printed text/screenshots**; handwriting is unreliable offline (an AI key reads it much better).
 - Live objects can't make network calls (sandbox + no external resources by design) and keep state as JSON ≤ 400 KB.
 - Auto-layout is dagre/mind-map based; very large graphs (>80 nodes) are truncated by `sanitizePlan`.
+- **Worlds:** a world lives where it was made — a shared link or live room carries the board you're on, not the worlds inside it (portals show "not on this device"). Previews draw nested live objects/worlds as simple cards. Undo history is per board session (use *Version history* to undo across a visit). Deleting a board deletes the worlds inside it.
 - Excalidraw's own side panel overlaps the canvas on selection (upstream behaviour); the dock repositions around it but can't move it.
 - The hosted proxy's rate limit is per-instance memory (use a durable store for strict limits).

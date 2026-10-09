@@ -268,3 +268,44 @@ button { font-family: inherit; }
 .imged .sl { display: grid; gap: 2px; font-weight: 600; } .imged .sl span { display: flex; justify-content: space-between; } .imged .sl b { color: var(--mut); font-weight: 500; }
 .imged input[type=range] { width: 100%; accent-color: var(--acc); }
 @media (max-width: 760px) { .imged { grid-template-columns: 1fr; } }
+
+/* ── worlds: portals, trail, veil ── */
+.portal { position: absolute; inset: 0; border-radius: 16px; overflow: hidden; cursor: zoom-in; color: #fff; isolation: isolate;
+  background: radial-gradient(120% 120% at 50% 40%, #2a2557 0%, #14142b 70%);
+  box-shadow: 0 0 0 calc(2px + var(--near, 0) * 3px) rgba(139, 139, 245, calc(.55 + var(--near, 0) * .45)), 0 0 calc(18px + var(--near, 0) * 70px) calc(var(--near, 0) * 12px) rgba(255, 214, 102, calc(.18 + var(--near, 0) * .5));
+  transition: box-shadow .25s; }
+.portal-bg { position: absolute; inset: 40px 10px 10px; }
+.portal-bg img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; border-radius: 12px; transform: scale(calc(1 + var(--near, 0) * .03)); transition: transform .3s; }
+.portal-sky { position: absolute; inset: 0; } .portal-sky i { position: absolute; border-radius: 50%; background: #fff; opacity: .7; animation: twinkle 2.6s ease-in-out infinite; }
+@keyframes twinkle { 50% { opacity: .15; transform: scale(.6); } }
+.portal-ring { position: absolute; inset: 0; border-radius: 16px; pointer-events: none; background: conic-gradient(from 0deg, transparent 0 70%, rgba(255, 214, 102, .55) 85%, transparent 100%); mix-blend-mode: screen; opacity: .35; -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px)); mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px)); animation: spin 6s linear infinite; }
+.portal-label { position: absolute; left: 12px; top: 10px; display: flex; align-items: center; gap: 7px; padding: 5px 11px 5px 9px; border-radius: 999px; background: rgba(15, 15, 35, .72); backdrop-filter: blur(8px); font: 600 13px var(--font); max-width: calc(100% - 24px); }
+.portal-label b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 650; } .portal-label small { opacity: .6; } .portal-label .glyph { color: #ffd666; }
+.portal-hint { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); padding: 5px 12px; border-radius: 999px; background: rgba(255, 214, 102, .92); color: #2b2100; font: 650 12px var(--font); white-space: nowrap; pointer-events: none; transition: opacity .25s; }
+.portal.missing { cursor: not-allowed; filter: grayscale(.6); }
+.excalidraw__embeddable-container__inner:has(.portal) .excalidraw__embeddable-hint { display: none; }
+
+.trail { display: flex; align-items: center; gap: 2px; min-width: 0; }
+.trail button { all: unset; cursor: pointer; font: 600 13px var(--font); color: var(--mut); padding: 6px 7px; border-radius: 8px; white-space: nowrap; max-width: 96px; overflow: hidden; text-overflow: ellipsis; }
+.trail button:hover { background: var(--acc-soft); color: var(--ink); } .trail .sep { color: var(--mut); opacity: .6; font-size: 11px; }
+.pill .name.here { max-width: 150px; }
+.pill.in-world { background: linear-gradient(90deg, rgba(255, 214, 102, .22), var(--surface) 55%); }
+
+.veil { position: fixed; inset: 0; z-index: 60; pointer-events: none; opacity: 0;
+  background: radial-gradient(circle at 50% 50%, rgba(255, 233, 160, .95) 0%, rgba(139, 139, 245, .85) 38%, rgba(20, 20, 43, .96) 80%); }
+.veil.in { animation: veil-in .3s ease-out forwards; pointer-events: all; } .veil.out { animation: veil-out .75s ease-in .05s forwards; }
+.veil.in.up, .veil.out.up { background: radial-gradient(circle at 50% 50%, rgba(255, 255, 255, .0) 0%, rgba(139, 139, 245, .75) 45%, rgba(20, 20, 43, .96) 85%); }
+@keyframes veil-in { to { opacity: 1; } } @keyframes veil-out { from { opacity: 1; } to { opacity: 0; } }
+.app.arrive-in .excalidraw { animation: arrive-in .8s cubic-bezier(.2, .8, .2, 1); }
+.app.arrive-out .excalidraw { animation: arrive-out .8s cubic-bezier(.2, .8, .2, 1); }
+@keyframes arrive-in { from { transform: scale(1.18); filter: blur(6px); } to { transform: none; filter: none; } }
+@keyframes arrive-out { from { transform: scale(.9); filter: blur(5px); } to { transform: none; filter: none; } }
+.exit-hint { position: fixed; z-index: 14; top: 64px; left: 50%; transform: translateX(-50%); padding: 7px 14px; border-radius: 999px; background: var(--surface); border: 1px solid var(--line); box-shadow: var(--shadow); font: 600 13px var(--font); color: var(--ink); pointer-events: none; transition: opacity .2s; white-space: nowrap; }
+.world-hint { position: fixed; z-index: 10; left: 50%; top: 46%; transform: translate(-50%, -50%); text-align: center; pointer-events: none; color: var(--mut); font: 500 16px/1.5 var(--font); }
+.world-hint b { display: block; color: var(--ink); font: 700 clamp(24px, 4vw, 38px) var(--font); letter-spacing: -.02em; margin-bottom: 6px; }
+.starters button.featured { grid-column: 1 / -1; background: linear-gradient(100deg, rgba(139, 139, 245, .22), rgba(255, 214, 102, .22)); border-color: var(--acc); }
+@media (prefers-reduced-motion: reduce) { .portal-ring, .portal-sky i { animation: none; } .app.arrive-in .excalidraw, .app.arrive-out .excalidraw { animation: none; } }
+.logo-btn { all: unset; cursor: pointer; display: grid; place-items: center; padding: 4px; border-radius: 8px; } .logo-btn:hover { background: var(--acc-soft); }
+.crumb { display: flex; align-items: center; }
+.pill .name.here { color: var(--ink); }
+.pill.in-world { max-width: min(86vw, 700px); } .trail { overflow: hidden; }

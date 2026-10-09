@@ -14,6 +14,9 @@ export interface ProjectMeta {
   updatedAt: number;
   count: number;
   thumb?: string;
+  /** worlds: the board this one lives inside (reached by zooming into a portal there) */
+  parentId?: string;
+  portalId?: string;
 }
 export interface ProjectData {
   elements: readonly any[];
@@ -33,9 +36,10 @@ export interface Version {
 const metaStore = () => createStore("lumen-meta", "kv");
 const dataStore = () => createStore("lumen-data", "kv");
 const verStore = () => createStore("lumen-versions", "kv");
+const prevStore = () => createStore("lumen-previews", "kv");
 let stores: ReturnType<typeof makeStores> | null = null;
 function makeStores() {
-  return { meta: metaStore(), data: dataStore(), ver: verStore() };
+  return { meta: metaStore(), data: dataStore(), ver: verStore(), prev: prevStore() };
 }
 const S = () => (stores ??= makeStores());
 
@@ -48,12 +52,18 @@ export async function listProjects(): Promise<ProjectMeta[]> {
   return all.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-export async function createProject(name = "Untitled", data?: ProjectData): Promise<ProjectMeta> {
+export async function createProject(name = "Untitled", data?: ProjectData, rel?: { parentId: string; portalId?: string }): Promise<ProjectMeta> {
   const now = Date.now();
-  const meta: ProjectMeta = { id: rid(), name, createdAt: now, updatedAt: now, count: data?.elements.length ?? 0 };
+  const meta: ProjectMeta = { id: rid(), name, createdAt: now, updatedAt: now, count: data?.elements.length ?? 0, ...(rel ? { parentId: rel.parentId, portalId: rel.portalId } : {}) };
   await set(meta.id, meta, S().meta);
   await set(meta.id, data ?? { elements: [], files: {} }, S().data);
   return meta;
+}
+
+/** Attach an existing board under a parent (used when worlds are created bottom-up). */
+export async function linkProject(id: string, rel: { parentId: string; portalId?: string }) {
+  const m = await get<ProjectMeta>(id, S().meta);
+  if (m) await set(id, { ...m, ...rel }, S().meta);
 }
 
 export const getMeta = (id: string) => get<ProjectMeta>(id, S().meta);
@@ -75,11 +85,46 @@ export async function renameProject(id: string, name: string) {
   if (meta) await set(id, { ...meta, name: name.trim() || "Untitled" }, S().meta);
 }
 
+/** Deleting a board deletes every world inside it (and inside those…). */
 export async function deleteProject(id: string) {
-  await del(id, S().meta);
-  await del(id, S().data);
-  await del(id, S().ver);
+  const all = await listProjects();
+  for (const pid of [id, ...descendantsOf(all, id)]) {
+    await del(pid, S().meta);
+    await del(pid, S().data);
+    await del(pid, S().ver);
+    await del(pid, S().prev);
+  }
 }
+
+/* ───────── worlds ───────── */
+
+/** Root → … → parent of `id` (not including `id`). Cycle-safe. */
+export function ancestorsOf(all: readonly ProjectMeta[], id: string): ProjectMeta[] {
+  const by = new Map(all.map((p) => [p.id, p]));
+  const out: ProjectMeta[] = [];
+  const seen = new Set([id]);
+  let cur = by.get(id)?.parentId;
+  while (cur && by.has(cur) && !seen.has(cur)) {
+    seen.add(cur);
+    out.unshift(by.get(cur)!);
+    cur = by.get(cur)!.parentId;
+  }
+  return out;
+}
+export function descendantsOf(all: readonly ProjectMeta[], id: string): string[] {
+  const out: string[] = [];
+  const queue = [id];
+  const seen = new Set([id]);
+  while (queue.length) {
+    const cur = queue.shift()!;
+    for (const p of all) if (p.parentId === cur && !seen.has(p.id)) (seen.add(p.id), out.push(p.id), queue.push(p.id));
+  }
+  return out;
+}
+
+/** Larger preview of a board (what its portal shows). */
+export const savePreview = (id: string, dataURL: string) => set(id, dataURL, S().prev);
+export const getPreview = (id: string) => get<string>(id, S().prev);
 
 /* ───────── versions ───────── */
 
@@ -163,6 +208,12 @@ export class Autosaver {
     this.pending = fn;
     if (this.t) clearTimeout(this.t);
     this.t = setTimeout(() => void this.flush(), this.delay);
+  }
+  /** Drop anything pending (the board this belonged to is gone). */
+  cancel() {
+    if (this.t) clearTimeout(this.t);
+    this.t = null;
+    this.pending = null;
   }
   async flush() {
     if (this.t) clearTimeout(this.t);
