@@ -1,8 +1,9 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { diffScenes, relativeTime, type ProjectMeta, type Version } from "../store/projects";
 import { PROVIDERS, type ProviderId, type Settings } from "../ai/settings";
 import { AppFrame } from "../live/LiveObject";
 import { renderMarkdown } from "../live/runtime";
+import { display, SHORTCUT_GROUPS } from "./shortcuts";
 
 const CodeEditor = lazy(() => import("./CodeEditor"));
 
@@ -543,5 +544,79 @@ export function RenameDialog({ value, title, onSave, onClose }: { value: string;
         </footer>
       </form>
     </Modal>
+  );
+}
+
+/* ───────── keyboard shortcuts ───────── */
+
+export function ShortcutsDialog({ onClose }: { onClose: () => void }) {
+  return (
+    <Modal title="Keyboard shortcuts" onClose={onClose} wide>
+      <div className="shortcuts" data-testid="shortcuts">
+        {SHORTCUT_GROUPS.map((g) => (
+          <section key={g.title}>
+            <h4>{g.title}</h4>
+            <ul>
+              {g.items.map((it) => (
+                <li key={it.keys.join("+")}>
+                  <span>{it.does}</span>
+                  <span>
+                    {it.keys.map((k, i) => (
+                      <kbd key={i}>{display(k)}</kbd>
+                    ))}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))}
+      </div>
+    </Modal>
+  );
+}
+
+/* ───────── rapid sticky notes ───────── */
+
+export function QuickNote({ x, y, bg, border, onCommit, onClose }: { x: number; y: number; bg: string; border: string; onCommit: (text: string) => void; onClose: () => void }) {
+  const [t, setT] = useState("");
+  const done = useRef(false);
+  const commit = () => {
+    const v = t.trim();
+    if (v) onCommit(v);
+    setT("");
+  };
+  return (
+    <div className="quicknote" style={{ left: x, top: y, background: bg, borderColor: border }} onPointerDown={(e) => e.stopPropagation()} data-testid="quicknote">
+      <textarea
+        autoFocus
+        value={t}
+        placeholder="Type a thought…"
+        aria-label="New sticky note"
+        data-testid="quicknote-input"
+        onChange={(e) => setT(e.target.value)}
+        onBlur={() => {
+          if (done.current) return;
+          done.current = true;
+          const v = t.trim();
+          if (v) onCommit(v);
+          onClose();
+        }}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.nativeEvent.isComposing) return;
+          if (e.key === "Escape") {
+            e.preventDefault();
+            done.current = true;
+            const v = t.trim();
+            if (v) onCommit(v);
+            onClose();
+          } else if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            commit();
+          }
+        }}
+      />
+      <small>↵ add &amp; next · ⇧↵ new line · Esc done</small>
+    </div>
   );
 }

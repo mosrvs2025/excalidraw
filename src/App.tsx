@@ -654,7 +654,9 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
       entryZoom.current = api.getAppState().zoom.value;
       prevZoom.current = entryZoom.current;
     }, arrival === "up" ? 1000 : 200);
-    return () => clearTimeout(t);
+    // belt and braces: once the arrival animation is over, make Excalidraw re-measure its container
+    const r = arrival ? setTimeout(() => window.dispatchEvent(new Event("resize")), 900) : undefined;
+    return () => (clearTimeout(t), r && clearTimeout(r));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api]);
 
