@@ -387,7 +387,8 @@ test.describe("browser zoom notice", () => {
       window.dispatchEvent(new Event("resize"));
     });
     await expect(page.locator('[data-testid="zoom-notice"]')).toContainText("300%");
-    await expect(page.locator('[data-testid="zoom-notice"]')).toContainText("0");
+    await expect(page.locator('[data-testid="zoom-notice"]')).toContainText("magnifier");
+    await expect(page.locator('[data-testid="zoom-reset"]')).toHaveCount(0); // browser zoom can only be reset by the browser
   });
 });
 

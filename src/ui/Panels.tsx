@@ -707,11 +707,15 @@ const pageZoom = () => {
   return vv > 1.1 ? vv : bz >= 1.45 ? bz : 1; // (a docked DevTools panel also skews outer/inner width a little, so browser zoom needs a clear margin)
 };
 
-export function ZoomNotice() {
+export function ZoomNotice({ onReload }: { onReload: () => Promise<void> | void }) {
   const [z, setZ] = useState(() => pageZoom());
   const [gone, setGone] = useState(false);
+  const [vv, setVv] = useState(() => window.visualViewport?.scale ?? 1);
   useEffect(() => {
-    const on = () => setZ(pageZoom());
+    const on = () => {
+      setZ(pageZoom());
+      setVv(window.visualViewport?.scale ?? 1);
+    };
     window.addEventListener("resize", on);
     window.visualViewport?.addEventListener("resize", on);
     return () => {
@@ -721,11 +725,25 @@ export function ZoomNotice() {
   }, []);
   if (gone || z < 1.1) return null;
   const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+  const pinched = vv > 1.1; // the page itself is pinch-zoomed (a fresh load resets that); otherwise it's browser zoom (only the browser can reset that)
   return (
     <div className="zoomnotice" role="alert" data-testid="zoom-notice">
       <span>
-        This page is zoomed in to about <b>{Math.round(z * 100)}%</b>, so tools can slide off-screen. Pinch back out, or press <kbd>{mac ? "⌘" : "Ctrl"}</kbd> <kbd>0</kbd> to reset it.
+        {pinched ? (
+          <>
+            The page is pinch-zoomed to about <b>{Math.round(z * 100)}%</b>, which pushes tools off-screen. Tap <b>Reset</b> (your work is saved) or pinch back out.
+          </>
+        ) : (
+          <>
+            Your browser is zoomed to about <b>{Math.round(z * 100)}%</b>, which pushes tools off-screen. Press <kbd>{mac ? "⌘" : "Ctrl"}</kbd> <kbd>0</kbd>, or click the magnifier icon in the address bar and choose <b>Reset</b>.
+          </>
+        )}
       </span>
+      {pinched && (
+        <button className="chip primary" onClick={() => void onReload()} data-testid="zoom-reset">
+          Reset
+        </button>
+      )}
       <button className="chip ghost" onClick={() => setGone(true)}>
         Got it
       </button>

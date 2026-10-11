@@ -2224,7 +2224,7 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
           onClose={() => setRenameWorld(null)}
         />
       )}
-      <ZoomNotice />
+      <ZoomNotice onReload={async () => { await autosaver.flush(); location.reload(); }} />
       <Tour enabled={slide === null && !onboard && !(mobile && (empty || sel.ids.length > 0))} />
       {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
       {quick && <QuickNote x={Math.round(window.innerWidth / 2 - 110)} y={Math.round(window.innerHeight / 2 - 80)} bg="#fff3bf" border="#e19b00" onCommit={(t) => void addNotes([t])} onClose={() => setQuick(false)} />}
