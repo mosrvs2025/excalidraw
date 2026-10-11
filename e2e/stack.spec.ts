@@ -438,3 +438,27 @@ test.describe("zoom from anywhere", () => {
     expect(await zoom()).toBeGreaterThan(z1);
   });
 });
+
+test.describe("scrolling over controls doesn't pan the board", () => {
+  test("wheel / horizontal swipe over toolbars, panels, pill and dock leaves the canvas where it is; over the canvas it still pans", async ({ page }) => {
+    await openApp(page);
+    await page.locator('[data-testid="starter-worlds"]').click();
+    await page.waitForTimeout(1500);
+    await page.evaluate(() => { const a = (window as any).__lumen.api; const e = a.getSceneElements().find((x: any) => x.customData?.lumen?.kind === "portal"); a.updateScene({ appState: { selectedElementIds: { [e.id]: true } }, captureUpdate: "NEVER" }); });
+    await page.waitForTimeout(500);
+    const cam = () => page.evaluate(() => { const s = (window as any).__lumen.api.getAppState(); return [Math.round(s.scrollX), Math.round(s.scrollY)]; });
+    const before = await cam();
+    for (const sel of [".App-toolbar", ".selected-shape-actions", ".pill", '[data-testid="dock"]', ".zoom-actions", ".topright"]) {
+      const box = await page.locator(sel).first().boundingBox();
+      await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+      for (const [dx, dy] of [[400, 0], [-400, 0], [0, 300], [0, -300]]) await page.mouse.wheel(dx, dy);
+      await page.waitForTimeout(100);
+    }
+    expect(await cam()).toEqual(before);
+    // over the canvas itself it still pans
+    await page.mouse.move(900, 600);
+    await page.mouse.wheel(300, 0);
+    await page.waitForTimeout(150);
+    expect(await cam()).not.toEqual(before);
+  });
+});

@@ -1178,6 +1178,12 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
           canvas.dispatchEvent(new WheelEvent("wheel", { deltaX: e.deltaX, deltaY: e.deltaY, deltaMode: e.deltaMode, ctrlKey: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true }));
         }
       }
+      // Scrolling or swiping over the toolbars, panels, buttons or dock must never pan the board underneath them (it made the
+      // whole UI feel like it was sliding away). Only the canvas itself pans. Scrollable panels still scroll natively.
+      if (!e.ctrlKey) {
+        const t = e.target as Element | null;
+        if (t && t.closest && t.closest(".layer-ui__wrapper, .pill, .dock, .topright-m, .tour, .zoomnotice, .welcome, .present-bar, .toast") && !t.closest(".excalidraw__canvas")) e.stopPropagation();
+      }
       // you were still scrolling/pinching when the doorway swallowed you: that momentum must not carry on inside the new
       // world (you'd land at 20× and need a dozen more flicks to get out)
       if (arrivedAt.current && performance.now() - arrivedAt.current < 900) {
