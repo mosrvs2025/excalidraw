@@ -1166,7 +1166,18 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
   // Excalidraw zooms the canvas itself; we just stop the browser from zooming the app out from under it.
   useEffect(() => {
     const wheel = (e: WheelEvent) => {
-      if (e.ctrlKey) e.preventDefault();
+      if (e.ctrlKey) {
+        e.preventDefault();
+        // Zoom gestures over the toolbars, sidebar or controls would otherwise do nothing at all (the canvas only hears the wheel
+        // when the pointer is on it): hand them to the canvas, zooming around the middle of what you can see.
+        const canvas = document.querySelector<HTMLElement>(".excalidraw__canvas.interactive");
+        const t = e.target as Element | null;
+        if (canvas && t && !canvas.contains(t) && !t.closest('.scrim, [role="dialog"], .Modal, .history, input, textarea, [contenteditable="true"], .excalidraw__embeddable-container')) {
+          const r = canvas.getBoundingClientRect();
+          e.stopPropagation();
+          canvas.dispatchEvent(new WheelEvent("wheel", { deltaX: e.deltaX, deltaY: e.deltaY, deltaMode: e.deltaMode, ctrlKey: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, bubbles: true, cancelable: true }));
+        }
+      }
       // you were still scrolling/pinching when the doorway swallowed you: that momentum must not carry on inside the new
       // world (you'd land at 20× and need a dozen more flicks to get out)
       if (arrivedAt.current && performance.now() - arrivedAt.current < 900) {

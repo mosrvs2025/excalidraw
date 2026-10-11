@@ -409,3 +409,32 @@ test.describe("the UI layer can't be scrolled or panned away", () => {
     expect(sc).toEqual([0, 0, 0, 0, 0, 0]);
   });
 });
+
+test.describe("zoom from anywhere", () => {
+  test("pinch / Ctrl+scroll over the toolbars or the Library sidebar zooms the canvas (it used to do nothing)", async ({ page }) => {
+    await openApp(page);
+    await page.locator('[data-testid="starter-braindump"]').click();
+    await page.waitForTimeout(800);
+    await page.locator(".default-sidebar-trigger").click();
+    await page.waitForTimeout(500);
+    const zoom = () => page.evaluate(() => +(window as any).__lumen.api.getAppState().zoom.value.toFixed(3));
+    const z0 = await zoom();
+    // over the sidebar, then over the board pill, then over the top toolbar
+    for (const sel of [".sidebar-trigger, .layer-ui__sidebar", ".pill", ".App-toolbar"]) {
+      const box = await page.locator(sel).first().boundingBox();
+      await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+      await page.keyboard.down("Control");
+      await page.mouse.wheel(0, 300);
+      await page.keyboard.up("Control");
+      await page.waitForTimeout(150);
+    }
+    expect(await zoom()).toBeLessThan(z0);
+    // and zooming back in works from there too
+    const z1 = await zoom();
+    await page.keyboard.down("Control");
+    await page.mouse.wheel(0, -900);
+    await page.keyboard.up("Control");
+    await page.waitForTimeout(200);
+    expect(await zoom()).toBeGreaterThan(z1);
+  });
+});
