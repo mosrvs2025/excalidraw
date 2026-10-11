@@ -286,10 +286,11 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
   const [uiOpen, setUiOpen] = useState(false); // an Excalidraw menu / popup / sidebar / dialog is up: our overlays step aside
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [quick, setQuick] = useState(false);
-  const [halo, setHalo] = useState<(Spot & { label: string }) | null>(null);
+  const [halo, setHalo] = useState<(Spot & { label: string; ready?: boolean }) | null>(null);
+  const dwell = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [offer, setOffer] = useState<{ ids: string[]; rect: Spot; portalId?: string; name?: string } | null>(null);
   const [burst, setBurst] = useState<{ x: number; y: number; k: number } | null>(null);
-  const dragWas = useRef<{ dragging: boolean; target: string | null; ids: string[]; portal: boolean }>({ dragging: false, target: null, ids: [], portal: false });
+  const dragWas = useRef<{ dragging: boolean; target: string | null; ids: string[]; portal: boolean; since: number }>({ dragging: false, target: null, ids: [], portal: false, since: 0 });
   const [editImg, setEditImg] = useState(false);
   const [agentDlg, setAgentDlg] = useState(false);
   const [gallery, setGallery] = useState(false);
@@ -771,6 +772,7 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
     return { x: Math.round(p.x), y: Math.round(p.y), w: Math.round(q.x - p.x), h: Math.round(q.y - p.y) };
   };
 
+  const DWELL_MS = 550;
   /** Called from onChange: show a halo on what you're hovering while dragging (a picture to stack on, or a world to drop into), and an offer when you let go. */
   const stackWatch = (elements: readonly ExcalidrawElement[], st: AppState) => {
     const w = dragWas.current;
@@ -790,21 +792,28 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
         w.target = id;
         w.portal = !!portalHit;
         const el = id ? live.find((e) => e.id === id) : null;
-        setHalo(el ? { ...viewRect(el, st), label: portalHit ? `Drop into ${nameOf(el!)}` : "Drop to stack" } : null);
+        w.since = performance.now();
+        if (dwell.current) clearTimeout(dwell.current);
+        setHalo(el ? { ...viewRect(el, st), label: portalHit ? `Hold to drop into ${nameOf(el!)}` : "Hold to stack" } : null);
+        // hold still for a beat and the halo arms: letting go now does it straight away, no extra click
+        if (el) dwell.current = setTimeout(() => setHalo((h) => (h ? { ...h, ready: true, label: portalHit ? `Release to drop into ${nameOf(el)}` : "Release to stack" } : h)), DWELL_MS);
       }
       w.ids = moving.map((e) => e.id);
     } else if (w.dragging) {
       const t = w.target;
       const wasPortal = w.portal;
+      const armed = performance.now() - w.since >= DWELL_MS;
       w.target = null;
+      if (dwell.current) clearTimeout(dwell.current);
       setHalo(null);
       if (t && w.ids.length) {
         const live = elements.filter((e) => !e.isDeleted && (e.id === t || w.ids.includes(e.id)));
         const [x1, y1, x2, y2] = getCommonBounds(live);
         const rect = viewRect({ x: x1, y: y1, width: x2 - x1, height: y2 - y1 }, st);
         const tEl = live.find((e) => e.id === t);
-        if (wasPortal && tEl) setOffer({ ids: w.ids, rect, portalId: t, name: nameOf(tEl) });
-        else setOffer({ ids: [...w.ids, t], rect });
+        const o = wasPortal && tEl ? { ids: w.ids, rect, portalId: t, name: nameOf(tEl) } : { ids: [...w.ids, t], rect };
+        if (armed) setTimeout(() => void acceptRef.current(o), 0);
+        else setOffer(o);
       }
     }
     w.dragging = dragging;
@@ -1139,6 +1148,21 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
     return () => clearTimeout(t);
   }, [offer]);
 
+  // Ctrl/⌘+scroll or a trackpad pinch over anything but the canvas would zoom the whole *page* (menus, tooltips and all).
+  // Excalidraw zooms the canvas itself; we just stop the browser from zooming the app out from under it.
+  useEffect(() => {
+    const wheel = (e: WheelEvent) => e.ctrlKey && e.preventDefault();
+    const gesture = (e: Event) => e.preventDefault();
+    window.addEventListener("wheel", wheel, { passive: false });
+    window.addEventListener("gesturestart", gesture);
+    window.addEventListener("gesturechange", gesture);
+    return () => {
+      window.removeEventListener("wheel", wheel);
+      window.removeEventListener("gesturestart", gesture);
+      window.removeEventListener("gesturechange", gesture);
+    };
+  }, []);
+
   /* ───────── keyboard: "/" or ⌘K to talk to the canvas ───────── */
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
@@ -1400,6 +1424,11 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
     list.push({ id: "dup", label: "Duplicate", icon: "⧉", run: duplicateLive });
     return list;
   }, [liveEl?.id, liveMeta?.kind, (liveMeta as any)?.state != null, sel.image?.id]);
+
+  // dropping onto something without holding offers the move as the first chip in the dock (never floating over the other chips)
+  const dockActions = offer
+    ? [{ id: "stack", label: offer.portalId ? `Move into ${offer.name}` : "Stack into a world", icon: offer.portalId ? "↘" : "🗂", run: () => void acceptOffer(offer) }, ...actions]
+    : actions;
 
   /* ───────── history ───────── */
   const openHistory = async () => {
@@ -1938,7 +1967,7 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
   const expandedEl = expanded ? (api?.getSceneElements().find((e) => e.id === expanded.id) as ExcalidrawEmbeddableElement | undefined) : undefined;
 
   return (
-    <div className={`app ${mobile ? "is-mobile" : ""} ${uiOpen ? "ui-open" : ""} ${slide !== null ? "presenting" : ""} ${arrival ? `arrive-${arrival === "down" ? "in" : "out"}` : ""}`} data-theme={theme}>
+    <div className={`app ${liveEl ? "lumen-obj" : ""} ${mobile ? "is-mobile" : ""} ${uiOpen ? "ui-open" : ""} ${slide !== null ? "presenting" : ""} ${arrival ? `arrive-${arrival === "down" ? "in" : "out"}` : ""}`} data-theme={theme}>
       <Excalidraw
         excalidrawAPI={(a) => {
           apiRef.current = a;
@@ -1966,6 +1995,11 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
           if (now - ((onPointerUpdateLast.t as number) || 0) < 40) return;
           onPointerUpdateLast.t = now;
           s.publish({ t: "pointer", from: s.id, x: p.pointer.x, y: p.pointer.y, tool: p.pointer.tool, name: identity.name, color: identity.color });
+        }}
+        onLinkOpen={(el, ev) => {
+          if (!getMeta(el)) return;
+          ev.preventDefault(); // Lumen objects carry a placeholder link: opening it should do something useful instead
+          if (isPortal(el as ExcalidrawElement)) void diveInto(el as ExcalidrawEmbeddableElement, false);
         }}
         validateEmbeddable={(link) => link.startsWith(LIVE_HOST) || /^https:\/\/(www\.)?(youtube\.com|youtu\.be|vimeo\.com|figma\.com)/.test(link)}
         renderEmbeddable={(el, st) => (getMeta(el) ? <LiveObject element={el} theme={theme} zoom={st.zoom.value} viewW={st.width} viewH={st.height} /> : null)}
@@ -2117,7 +2151,7 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
       {slide === null && <Dock
         rect={sel.rect}
         suggestions={suggestions}
-        actions={actions}
+        actions={dockActions}
         placeholder={placeholder}
         busy={busy}
         engine={engine}
@@ -2132,13 +2166,7 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
       />}
 
       {mobile && slide === null && <div className="topright-m">{topRight}</div>}
-      {halo && <div className="drophalo" style={{ left: halo.x - 8, top: halo.y - 8, width: halo.w + 16, height: halo.h + 16 }} aria-hidden data-testid="drophalo"><span>{halo.label}</span></div>}
-      {offer && (
-        <div className="stackoffer" style={{ left: Math.min(Math.max(Math.min(150, window.innerWidth / 2), offer.rect.x + offer.rect.w / 2), window.innerWidth - Math.min(150, window.innerWidth / 2)), top: Math.min(offer.rect.y + offer.rect.h + 14, window.innerHeight - 120) }} onPointerDown={(e) => e.stopPropagation()} data-testid="stackoffer">
-          <button className="chip primary" onClick={() => void acceptOffer(offer)} data-testid="stack-go"><i>{offer.portalId ? "↘" : "🗂"}</i>{offer.portalId ? `Move into ${offer.name}` : "Stack into a world"}<kbd>↵</kbd></button>
-          <button className="chip ghost" onClick={() => setOffer(null)} aria-label="Dismiss"><kbd>Esc</kbd></button>
-        </div>
-      )}
+      {halo && <div className={`drophalo ${halo.ready ? "ready" : ""}`} style={{ left: halo.x - 8, top: halo.y - 8, width: halo.w + 16, height: halo.h + 16 }} aria-hidden data-testid="drophalo"><span>{halo.label}</span></div>}
       {burst && <div className="burst" key={burst.k} style={{ left: burst.x, top: burst.y }} aria-hidden>{Array.from({ length: 10 }, (_, i) => <i key={i} style={{ ["--a" as any]: `${i * 36}deg` }} />)}</div>}
       {toast && (
         <div className="toast" role="status" data-testid="toast" key={toast.id} style={mobile ? undefined : undefined}>

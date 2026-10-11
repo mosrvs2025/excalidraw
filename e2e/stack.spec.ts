@@ -49,7 +49,9 @@ test.describe("stacking pictures", () => {
     await shot(page, "50-drop-halo");
     await page.mouse.up();
     await expect(page.locator('[data-testid="drophalo"]')).toHaveCount(0);
-    await expect(page.locator('[data-testid="stackoffer"]')).toBeVisible();
+    await expect(page.locator('[data-testid="action-stack"]')).toBeVisible();
+    // it's a chip in the dock, so it can't cover the other actions
+    await expect(page.locator('[data-testid="intent-app"], [data-testid="action-editimg"]').first()).toBeVisible();
     await shot(page, "51-stack-offer");
     await page.keyboard.press("Enter");
     await expect.poll(async () => (await scene(page)).filter((e) => e.kind === "portal" && !e.isDeleted).length, { timeout: 8000 }).toBe(1);
@@ -67,7 +69,43 @@ test.describe("stacking pictures", () => {
     await page.mouse.down();
     await page.mouse.move(from.x + 40, from.y + 120, { steps: 5 });
     await page.mouse.up();
-    await expect(page.locator('[data-testid="stackoffer"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="action-stack"]')).toHaveCount(0);
+  });
+});
+
+test.describe("hold to stack", () => {
+  test("hover a picture over another until the halo arms, release: stacked into a world with no extra click", async ({ page }) => {
+    await openApp(page);
+    await twoPictures(page);
+    const from = await centre(page, "ib");
+    const to = await centre(page, "ia");
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move(to.x + 4, to.y + 4, { steps: 8 });
+    await expect(page.locator('[data-testid="drophalo"]')).toContainText("Hold to stack");
+    await expect(page.locator('[data-testid="drophalo"]')).toContainText("Release to stack");
+    await page.mouse.up();
+    await expect.poll(async () => (await scene(page)).filter((e) => e.kind === "portal" && !e.isDeleted).length, { timeout: 8000 }).toBe(1);
+    await expect(page.locator('[data-testid="toast"]')).toContainText("Stack of 2");
+  });
+});
+
+test.describe("page zoom", () => {
+  test("Ctrl+wheel over the UI doesn't zoom the browser page (the app can't be zoomed out from under itself)", async ({ page }) => {
+    await openApp(page);
+    const prevented = await page.evaluate(() => {
+      const e = new WheelEvent("wheel", { ctrlKey: true, deltaY: -120, cancelable: true, bubbles: true });
+      document.querySelector(".pill")!.dispatchEvent(e);
+      return e.defaultPrevented;
+    });
+    expect(prevented).toBe(true);
+  });
+  test("link icon / editor on a world is Lumen's, not a dead web link", async ({ page }) => {
+    await openApp(page);
+    await page.locator('[data-testid="starter-braindump"]').click();
+    await page.locator('[data-testid="intent-world"]').click();
+    await expect.poll(async () => (await scene(page)).filter((e) => e.kind === "portal").length).toBe(1);
+    await expect(page.locator(".app")).toHaveClass(/lumen-obj/);
   });
 });
 
@@ -96,10 +134,11 @@ test.describe("dropping into a world", () => {
     await page.mouse.down();
     await page.mouse.move((from.x + to.x) / 2, (from.y + to.y) / 2, { steps: 6 });
     await page.mouse.move(to.x, to.y, { steps: 6 });
-    await expect(page.locator('[data-testid="drophalo"]')).toContainText("Drop into");
+    await expect(page.locator('[data-testid="drophalo"]')).toContainText("Hold to drop into");
+    await expect(page.locator('[data-testid="drophalo"]')).toContainText("Release to drop into");
     await page.mouse.up();
-    await expect(page.locator('[data-testid="stack-go"]')).toContainText("Move into");
-    await page.keyboard.press("Enter");
+    // held long enough: letting go moves it straight in, no extra click
+
     await expect.poll(async () => (await scene(page)).filter((e) => e.type === "image" && !e.isDeleted).length, { timeout: 8000 }).toBe(0);
     await expect(page.locator('[data-testid="toast"]')).toContainText("Moved into");
     await page.locator('[data-testid="action-enter"]').click();
