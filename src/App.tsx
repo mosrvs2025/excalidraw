@@ -1162,10 +1162,27 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
     return () => clearTimeout(t);
   }, [offer]);
 
+  // while the page is pinch-zoomed, touch pinches must be allowed to undo it
+  useEffect(() => {
+    const vv = window.visualViewport;
+    if (!vv) return;
+    const on = () => document.documentElement.classList.toggle("pinched", vv.scale > 1.05);
+    on();
+    vv.addEventListener("resize", on);
+    return () => vv.removeEventListener("resize", on);
+  }, []);
+
   // Ctrl/⌘+scroll or a trackpad pinch over anything but the canvas would zoom the whole *page* (menus, tooltips and all).
   // Excalidraw zooms the canvas itself; we just stop the browser from zooming the app out from under it.
   useEffect(() => {
     const wheel = (e: WheelEvent) => {
+      // If the page is already pinch-zoomed, the pinch *out* that undoes it must reach the browser (and not zoom the canvas too);
+      // otherwise we'd be blocking the one gesture that gets you back.
+      const pinched = (window.visualViewport?.scale ?? 1) > 1.05;
+      if (pinched && e.ctrlKey && e.deltaY > 0) {
+        e.stopPropagation();
+        return;
+      }
       if (e.ctrlKey) {
         e.preventDefault();
         // Zoom gestures over the toolbars, sidebar or controls would otherwise do nothing at all (the canvas only hears the wheel
@@ -2241,7 +2258,15 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
           onClose={() => setRenameWorld(null)}
         />
       )}
-      <ZoomNotice onReload={async () => { await autosaver.flush(); location.reload(); }} />
+      <ZoomNotice
+        onReload={async () => {
+          await autosaver.flush();
+          // a *new* navigation starts at 100%; a plain reload can keep the pinch level
+          const u = new URL(location.href);
+          u.searchParams.set("_z", String(Date.now()));
+          location.replace(u.toString());
+        }}
+      />
       <Tour enabled={slide === null && !onboard && !(mobile && (empty || sel.ids.length > 0))} />
       {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
       {quick && <QuickNote x={Math.round(window.innerWidth / 2 - 110)} y={Math.round(window.innerHeight / 2 - 80)} bg="#fff3bf" border="#e19b00" onCommit={(t) => void addNotes([t])} onClose={() => setQuick(false)} />}

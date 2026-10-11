@@ -462,3 +462,39 @@ test.describe("scrolling over controls doesn't pan the board", () => {
     expect(await cam()).not.toEqual(before);
   });
 });
+
+test.describe("pinch-zoomed page", () => {
+  test("banner stays readable and inside the visible area; pinch-out is allowed through, pinch-in is not", async ({ page }) => {
+    await openApp(page);
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1.5 });
+    const n = page.locator('[data-testid="zoom-notice"]');
+    await expect(n).toContainText("pinch-zoomed");
+    // fully inside what you can actually see
+    const inside = await page.evaluate(() => {
+      const v = window.visualViewport!;
+      const b = document.querySelector('[data-testid="zoom-notice"]')!.getBoundingClientRect();
+      // getBoundingClientRect is in layout coordinates; the visible window is [offset, offset + size]
+      return b.left >= v.offsetLeft - 1 && b.right <= v.offsetLeft + v.width + 1 && b.top >= v.offsetTop - 1 && b.bottom <= v.offsetTop + v.height + 1;
+    });
+    expect(inside).toBe(true);
+    // the buttons are readable: dark text on a light chip, not dark on dark
+    const contrast = await page.evaluate(() => {
+      const btn = [...document.querySelectorAll('[data-testid="zoom-notice"] button')].find((b) => /Got it/.test(b.textContent || "")) as HTMLElement;
+      const cs = getComputedStyle(btn);
+      return [cs.color, cs.backgroundColor];
+    });
+    expect(contrast[0]).not.toBe(contrast[1]);
+    expect(contrast[1]).toBe("rgb(255, 255, 255)");
+    // pinch out (ctrl+wheel, deltaY>0) must NOT be cancelled; pinch in must be
+    const res = await page.evaluate(() => {
+      const mk = (dy: number) => {
+        const e = new WheelEvent("wheel", { ctrlKey: true, deltaY: dy, cancelable: true, bubbles: true });
+        document.querySelector(".pill")!.dispatchEvent(e);
+        return e.defaultPrevented;
+      };
+      return { out: mk(120), inn: mk(-120) };
+    });
+    expect(res).toEqual({ out: false, inn: true });
+  });
+});

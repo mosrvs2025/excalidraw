@@ -710,28 +710,40 @@ const pageZoom = () => {
 export function ZoomNotice({ onReload }: { onReload: () => Promise<void> | void }) {
   const [z, setZ] = useState(() => pageZoom());
   const [gone, setGone] = useState(false);
-  const [vv, setVv] = useState(() => window.visualViewport?.scale ?? 1);
+  const read = () => {
+    const v = window.visualViewport;
+    return { scale: v?.scale ?? 1, x: v?.offsetLeft ?? 0, y: v?.offsetTop ?? 0, w: v?.width ?? window.innerWidth };
+  };
+  const [vv, setVv] = useState(read);
   useEffect(() => {
     const on = () => {
       setZ(pageZoom());
-      setVv(window.visualViewport?.scale ?? 1);
+      setVv(read());
     };
     window.addEventListener("resize", on);
     window.visualViewport?.addEventListener("resize", on);
+    window.visualViewport?.addEventListener("scroll", on);
     return () => {
       window.removeEventListener("resize", on);
       window.visualViewport?.removeEventListener("resize", on);
+      window.visualViewport?.removeEventListener("scroll", on);
     };
   }, []);
   if (gone || z < 1.1) return null;
   const mac = /Mac|iPhone|iPad/.test(navigator.platform);
-  const pinched = vv > 1.1; // the page itself is pinch-zoomed (a fresh load resets that); otherwise it's browser zoom (only the browser can reset that)
+  const pinched = vv.scale > 1.1; // the page itself is pinch-zoomed (a fresh load resets that); otherwise it's browser zoom (only the browser can reset that)
   return (
-    <div className="zoomnotice" role="alert" data-testid="zoom-notice">
+    <div
+      className="zoomnotice"
+      role="alert"
+      data-testid="zoom-notice"
+      // when the page is pinch-zoomed the layout viewport is bigger than what you can see: keep the notice inside the visible part, at normal size
+      style={pinched ? { left: vv.x + vv.w / 2, top: vv.y + 8 / vv.scale, transform: `translateX(-50%) scale(${1 / vv.scale})`, transformOrigin: "top center", width: Math.min(560, vv.w - 16) * vv.scale } : undefined}
+    >
       <span>
         {pinched ? (
           <>
-            The page is pinch-zoomed to about <b>{Math.round(z * 100)}%</b>, which pushes tools off-screen. Tap <b>Reset</b> (your work is saved) or pinch back out.
+            The page is pinch-zoomed to about <b>{Math.round(z * 100)}%</b>, which pushes tools off-screen. <b>Pinch back out</b> with two fingers on the touchpad, or tap <b>Reset</b> (your work is saved).
           </>
         ) : (
           <>

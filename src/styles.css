@@ -397,3 +397,7 @@ kbd { font: 600 11px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 1p
 .zoomnotice .chip { flex: none; color: #3b2f00; border-color: #e19b00; }
 
 .zoomnotice { align-items: flex-start; } .zoomnotice .chip.primary { background: #3b2f00; color: #fff3bf; border-color: #3b2f00; }
+
+html.pinched .app { touch-action: auto; }
+.zoomnotice .chip, .zoomnotice .chip.ghost { background: #fff; color: #3b2f00; border-color: #e19b00; }
+.zoomnotice .chip.primary { background: #3b2f00; color: #fff3bf; border-color: #3b2f00; }
