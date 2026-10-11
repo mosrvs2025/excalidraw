@@ -694,3 +694,30 @@ export function Tour({ enabled }: { enabled: boolean }) {
     </div>
   );
 }
+
+/* ───────── browser zoom notice ───────── */
+
+/** Ctrl+scroll over the UI zooms the *page* (not the canvas), and browsers remember that per site: tools end up off-screen. */
+export const browserZoom = () => (!window.matchMedia?.("(pointer: coarse)").matches && window.outerWidth > 0 && window.innerWidth > 0 ? window.outerWidth / window.innerWidth : 1);
+
+export function ZoomNotice() {
+  const [z, setZ] = useState(() => browserZoom());
+  const [gone, setGone] = useState(false);
+  useEffect(() => {
+    const on = () => setZ(browserZoom());
+    window.addEventListener("resize", on);
+    return () => window.removeEventListener("resize", on);
+  }, []);
+  if (gone || z < 1.45) return null;
+  const mac = /Mac|iPhone|iPad/.test(navigator.platform);
+  return (
+    <div className="zoomnotice" role="alert" data-testid="zoom-notice">
+      <span>
+        This page is zoomed in to about <b>{Math.round(z * 100)}%</b>, so some tools can be off-screen. Press <kbd>{mac ? "⌘" : "Ctrl"}</kbd> <kbd>0</kbd> to reset it.
+      </span>
+      <button className="chip ghost" onClick={() => setGone(true)}>
+        Got it
+      </button>
+    </div>
+  );
+}

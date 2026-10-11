@@ -377,3 +377,16 @@ test.describe("worlds: zoom feel + link safety", () => {
     await expect(page.locator('[data-testid="crumb"]')).toHaveCount(0, { timeout: 6000 });
   });
 });
+
+test.describe("browser zoom notice", () => {
+  test("a page zoomed way in says so and how to fix it; normal size says nothing", async ({ page }) => {
+    await openApp(page);
+    await expect(page.locator('[data-testid="zoom-notice"]')).toHaveCount(0);
+    await page.evaluate(() => {
+      Object.defineProperty(window, "outerWidth", { value: window.innerWidth * 3, configurable: true });
+      window.dispatchEvent(new Event("resize"));
+    });
+    await expect(page.locator('[data-testid="zoom-notice"]')).toContainText("300%");
+    await expect(page.locator('[data-testid="zoom-notice"]')).toContainText("0");
+  });
+});

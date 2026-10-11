@@ -64,7 +64,7 @@ import { withStandIns } from "./worlds/standins";
 import { findFreeSpot } from "./canvas/placement";
 import { collectWorlds, importBundle } from "./store/bundle";
 import { searchElements } from "./store/search";
-import { ShortcutsDialog, QuickNote, Tour, tourEvent } from "./ui/Panels";
+import { ShortcutsDialog, QuickNote, Tour, tourEvent, ZoomNotice } from "./ui/Panels";
 import type { SlashCommand } from "./ui/slash";
 import { splitItems } from "./ui/slash";
 import { dropTarget, easeOutBack, gridLayout, pileLayout, type Box } from "./worlds/stack";
@@ -2224,6 +2224,7 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
           onClose={() => setRenameWorld(null)}
         />
       )}
+      <ZoomNotice />
       <Tour enabled={slide === null && !onboard && !(mobile && (empty || sel.ids.length > 0))} />
       {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
       {quick && <QuickNote x={Math.round(window.innerWidth / 2 - 110)} y={Math.round(window.innerHeight / 2 - 80)} bg="#fff3bf" border="#e19b00" onCommit={(t) => void addNotes([t])} onClose={() => setQuick(false)} />}
