@@ -354,3 +354,34 @@ kbd { font: 600 11px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 1p
 /* touch: no keyboard, so no key hints; bigger targets; menus fit the screen */
 @media (pointer: coarse) { kbd, .ask-hint { display: none !important; } .slashmenu li { padding: 12px 12px; } .stackoffer .chip { min-height: 44px; } }
 @media (max-width: 640px) { .slashmenu { max-height: 40vh; overflow-y: auto; min-width: 0; width: 100%; box-sizing: border-box; } .stackoffer { max-width: calc(100vw - 16px); } .quicknote { max-width: calc(100vw - 24px); } }
+
+/* ── phones: the welcome sits between the toolbar and the dock instead of floating over everything ── */
+.app.ui-open .welcome, .app.ui-open .tour, .app.ui-open .world-hint, .app.ui-open .exit-hint { opacity: 0; pointer-events: none; transition: opacity .12s; }
+@media (max-width: 700px) {
+  .welcome { top: 176px; transform: translateX(-50%); }
+  .welcome h1 { font-size: 27px; margin-bottom: 8px; }
+  .welcome p { font-size: 14px; margin-bottom: 14px; }
+  .starters { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .starters .featured { grid-column: 1 / -1; }
+  .starters button { padding: 11px 12px; border-radius: 14px; }
+  .starters b { font-size: 14px; }
+  .welcome .hint { display: none; }
+  .app.ui-open .dock, .app.ui-open .pill { opacity: 0; pointer-events: none; transition: opacity .12s; }
+}
+@media (max-width: 700px) and (max-height: 760px) { .welcome p:not(.hint) { display: none; } .welcome { top: 168px; } }
+@media (pointer: coarse) { .welcome .hint { display: none; } }
+
+/* phones: our top-right buttons live beside the board pill (Excalidraw's own bar is already full) */
+.topright-m { position: fixed; z-index: 11; top: 58px; right: 56px; }
+.topright-m .presence small { display: none; }
+@media (max-width: 700px) { .pill { max-width: calc(100vw - 168px); } }
+.dock textarea::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+@media (max-width: 700px) { .tour { padding: 9px 12px; font-size: 12.5px; gap: 2px; border-radius: 14px; } .tour b { font-size: 14px; } .tour div { margin-top: 4px; } .tour .chip { padding: 4px 10px; font-size: 12px; } }
+
+/* tablets & small laptops: the board pill drops below the toolbar instead of covering it */
+@media (min-width: 701px) and (max-width: 1100px) { .pill { top: 58px; left: 12px; } }
+/* landscape phones: no room for the welcome cards or the tour — the canvas and the dock are enough */
+@media (max-height: 480px) { .welcome, .tour { display: none; } }
+/* tablets: Excalidraw's "Library" button keeps just its icon so the top-right row fits */
+@media (min-width: 701px) and (max-width: 1100px) { .sidebar-trigger__label { display: none !important; } .default-sidebar-trigger { padding: 0 10px !important; } }

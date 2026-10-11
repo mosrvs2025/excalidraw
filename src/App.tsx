@@ -283,6 +283,7 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
       return [];
     }
   });
+  const [uiOpen, setUiOpen] = useState(false); // an Excalidraw menu / popup / sidebar / dialog is up: our overlays step aside
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [quick, setQuick] = useState(false);
   const [halo, setHalo] = useState<(Spot & { label: string }) | null>(null);
@@ -1094,6 +1095,8 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
         setTheme(appState.theme as "light" | "dark");
       }
       if (!alive.current) return; // this board has been left; ignore the canvas's death throes
+      const open = !!(appState.openMenu || appState.openPopup || appState.openSidebar || appState.openDialog);
+      setUiOpen((u) => (u === open ? u : open));
       updateSelection(elements, appState);
       worldTickRef.current(elements, appState);
       stackWatchRef.current(elements, appState);
@@ -1123,6 +1126,8 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
     [autosaver, persist, publishScene, thumbnail, updateSelection, checkpoint],
   );
 
+  const panelRef = useRef<typeof panel>(null);
+  panelRef.current = panel;
   const offerRef = useRef(offer);
   offerRef.current = offer;
   const acceptRef = useRef<(o: NonNullable<typeof offer>) => Promise<void>>(async () => {});
@@ -1151,6 +1156,9 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
         const ids = a ? Object.keys(a.getAppState().selectedElementIds) : [];
         const el = a?.getSceneElements().find((x) => ids.includes(x.id) && isPortal(x));
         if (el) void diveInto(el as ExcalidrawEmbeddableElement, false);
+      } else if (e.key === "Escape" && !typing && panelRef.current === "history") {
+        e.preventDefault();
+        setPanel(null);
       } else if (offerRef.current && !typing && (e.key === "Enter" || e.key === "Escape")) {
         e.preventDefault();
         e.stopPropagation();
@@ -1885,6 +1893,32 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
     }
   };
 
+  const topRight = (
+    <div className="topright" onPointerDown={(e) => e.stopPropagation()}>
+      {peers.length > 0 && (
+        <div className="presence" title={`${peers.length} other${peers.length > 1 ? "s" : ""} in this board (other tabs)`} data-testid="presence">
+          {peers.slice(0, 4).map((p) => (
+            <span key={p.id} style={{ background: p.color }}>
+              {p.name[0]}
+            </span>
+          ))}
+          <small>{peers.length + 1} here</small>
+        </div>
+      )}
+      {room && (
+        <button className={`live-badge ${link}`} onClick={shareLive} title="Live room — click to copy the link" data-testid="live-badge">
+          ● Live
+        </button>
+      )}
+      <button className="icon-btn" onClick={openHistory} title="History" aria-label="History" data-testid="open-history">
+        ⟲
+      </button>
+      <button className="icon-btn" onClick={() => setPanel("settings")} title="Intelligence settings" aria-label="Settings" data-testid="open-settings">
+        ✦
+      </button>
+    </div>
+  );
+
   /* ───────── derived UI ───────── */
   const suggestions: Suggestion[] = useMemo(() => (sel.graph && !liveEl ? suggestFor(sel.graph) : []), [sel.graph, liveEl]);
   const placeholder = (liveMeta as any)?.kind === "portal"
@@ -1896,14 +1930,14 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
     : sel.ids.length
       ? "Tell it what to do with this…"
       : empty
-        ? "Type anything… try “kanban”"
-        : "Ask the canvas…  ( / )";
+        ? mobile ? "Ask or type…" : "Type anything… try “kanban”"
+        : mobile ? "Ask the canvas…" : "Ask the canvas…  ( / )";
 
   const editingEl = editing ? (api?.getSceneElements().find((e) => e.id === editing.id) as ExcalidrawEmbeddableElement | undefined) : undefined;
   const expandedEl = expanded ? (api?.getSceneElements().find((e) => e.id === expanded.id) as ExcalidrawEmbeddableElement | undefined) : undefined;
 
   return (
-    <div className={`app ${mobile ? "is-mobile" : ""} ${slide !== null ? "presenting" : ""} ${arrival ? `arrive-${arrival === "down" ? "in" : "out"}` : ""}`} data-theme={theme}>
+    <div className={`app ${mobile ? "is-mobile" : ""} ${uiOpen ? "ui-open" : ""} ${slide !== null ? "presenting" : ""} ${arrival ? `arrive-${arrival === "down" ? "in" : "out"}` : ""}`} data-theme={theme}>
       <Excalidraw
         excalidrawAPI={(a) => {
           apiRef.current = a;
@@ -1934,31 +1968,7 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
         }}
         validateEmbeddable={(link) => link.startsWith(LIVE_HOST) || /^https:\/\/(www\.)?(youtube\.com|youtu\.be|vimeo\.com|figma\.com)/.test(link)}
         renderEmbeddable={(el, st) => (getMeta(el) ? <LiveObject element={el} theme={theme} zoom={st.zoom.value} viewW={st.width} viewH={st.height} /> : null)}
-        renderTopRightUI={() => slide !== null ? null : (
-          <div className="topright" onPointerDown={(e) => e.stopPropagation()}>
-            {peers.length > 0 && (
-              <div className="presence" title={`${peers.length} other${peers.length > 1 ? "s" : ""} in this board (other tabs)`} data-testid="presence">
-                {peers.slice(0, 4).map((p) => (
-                  <span key={p.id} style={{ background: p.color }}>
-                    {p.name[0]}
-                  </span>
-                ))}
-                <small>{peers.length + 1} here</small>
-              </div>
-            )}
-            {room && (
-              <button className={`live-badge ${link}`} onClick={shareLive} title="Live room — click to copy the link" data-testid="live-badge">
-                ● Live
-              </button>
-            )}
-            <button className="icon-btn" onClick={openHistory} title="History" aria-label="History" data-testid="open-history">
-              ⟲
-            </button>
-            <button className="icon-btn" onClick={() => setPanel("settings")} title="Intelligence settings" aria-label="Settings" data-testid="open-settings">
-              ✦
-            </button>
-          </div>
-        )}
+        renderTopRightUI={() => (slide !== null || mobile ? null : topRight)}
         UIOptions={{ canvasActions: { toggleTheme: true, export: { saveFileToDisk: true }, loadScene: true, saveToActiveFile: false } }}
         aiEnabled={false}
         langCode="en"
@@ -2120,6 +2130,7 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
         onNote={(t) => void addNotes(splitItems(t))}
       />}
 
+      {mobile && slide === null && <div className="topright-m">{topRight}</div>}
       {halo && <div className="drophalo" style={{ left: halo.x - 8, top: halo.y - 8, width: halo.w + 16, height: halo.h + 16 }} aria-hidden data-testid="drophalo"><span>{halo.label}</span></div>}
       {offer && (
         <div className="stackoffer" style={{ left: Math.min(Math.max(Math.min(150, window.innerWidth / 2), offer.rect.x + offer.rect.w / 2), window.innerWidth - Math.min(150, window.innerWidth / 2)), top: Math.min(offer.rect.y + offer.rect.h + 14, window.innerHeight - 120) }} onPointerDown={(e) => e.stopPropagation()} data-testid="stackoffer">
@@ -2162,7 +2173,7 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
           onClose={() => setRenameWorld(null)}
         />
       )}
-      <Tour enabled={slide === null && !onboard && !empty ? true : slide === null && !onboard} />
+      <Tour enabled={slide === null && !onboard && !(mobile && (empty || sel.ids.length > 0))} />
       {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
       {quick && <QuickNote x={Math.round(window.innerWidth / 2 - 110)} y={Math.round(window.innerHeight / 2 - 80)} bg="#fff3bf" border="#e19b00" onCommit={(t) => void addNotes([t])} onClose={() => setQuick(false)} />}
       {palette && <CommandPalette search={searchEverywhere} commands={commands} onAsk={(t) => run(t)} onClose={() => setPalette(false)} />}

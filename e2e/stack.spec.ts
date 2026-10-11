@@ -175,7 +175,8 @@ test.describe("saved views", () => {
   test("/view saves the camera; ⌘K → View: flies back to it", async ({ page }) => {
     await openApp(page);
     await page.locator('[data-testid="starter-braindump"]').click();
-    await page.evaluate(() => (window as any).__lumen.api.scrollToContent((window as any).__lumen.api.getSceneElements(), { fitToViewport: true, viewportZoomFactor: 0.9 }));
+    await page.evaluate(() => (window as any).__lumen.api.scrollToContent((window as any).__lumen.api.getSceneElements(), { fitToViewport: true, viewportZoomFactor: 0.9, animate: false }));
+    await page.waitForTimeout(300);
     const cam = () => page.evaluate(() => { const s = (window as any).__lumen.api.getAppState(); return { x: s.scrollX, y: s.scrollY, z: s.zoom.value }; });
     const home = await cam();
     await page.evaluate(() => window.dispatchEvent(new CustomEvent("lumen:ask", { detail: "/view Overview" })));
@@ -225,6 +226,14 @@ test.describe("on a phone", () => {
     await page.locator('[data-testid="intent-input"]').fill("/");
     const menu = page.locator('[data-testid="slash-menu"]');
     await expect(menu).toBeVisible();
+    await page.locator('[data-testid="intent-input"]').fill("/note hi");
+    await page.locator('[data-testid="intent-input"]').press("Enter");
+    await expect.poll(async () => await count(page, "note")).toBe(1);
+    // on a phone the tour steps aside while something is selected (the dock chips need the room)
+    await expect(page.locator('[data-testid="tour"]')).toHaveCount(0);
+    await page.evaluate(() => (window as any).__lumen.api.updateScene({ appState: { selectedElementIds: {} }, captureUpdate: "NEVER" }));
+    await expect(page.locator('[data-testid="tour"]')).toBeVisible();
+    await page.locator('[data-testid="intent-input"]').fill("/");
     const box = (await menu.boundingBox())!;
     expect(box.x).toBeGreaterThanOrEqual(0);
     expect(box.x + box.width).toBeLessThanOrEqual(391);
@@ -233,5 +242,22 @@ test.describe("on a phone", () => {
     expect(tour.x + tour.width).toBeLessThanOrEqual(391);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(391);
     await shot(page, "53-mobile-slash");
+  });
+});
+
+test.describe("phone: overlays step aside", () => {
+  test.use({ viewport: { width: 390, height: 780 }, hasTouch: true, isMobile: true });
+  test("opening the menu hides the welcome cards, dock and board pill so the menu is readable", async ({ page }) => {
+    await openApp(page);
+    await expect(page.locator(".welcome")).toBeVisible();
+    await page.locator('[data-testid="main-menu-trigger"]').tap();
+    await expect.poll(() => page.evaluate(() => getComputedStyle(document.querySelector(".welcome")!).opacity)).toBe("0");
+    expect(await page.evaluate(() => getComputedStyle(document.querySelector('[data-testid="dock"]')!).opacity)).toBe("0");
+    // the welcome sits clear of the toolbar row and the starters fit above the dock
+    await page.locator('[data-testid="main-menu-trigger"]').tap();
+    await expect.poll(() => page.evaluate(() => getComputedStyle(document.querySelector(".welcome")!).opacity)).toBe("1");
+    const w = (await page.locator(".welcome").boundingBox())!;
+    const d = (await page.locator('[data-testid="dock"]').boundingBox())!;
+    expect(w.y + w.height).toBeLessThanOrEqual(d.y + 2);
   });
 });

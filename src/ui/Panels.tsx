@@ -631,8 +631,8 @@ export function QuickNote({ x, y, bg, border, onCommit, onClose }: { x: number; 
 /* ───────── first-run tour: three real moments, advanced by what you actually do ───────── */
 
 const TOUR_KEY = "lumen:tour";
-const STEPS: { on: "note" | "world" | "enter"; title: string; body: string }[] = [
-  { on: "note", title: "Say it, don't draw it", body: "Press / and type  note buy milk; call mum  — then Enter." },
+const STEPS: { on: "note" | "world" | "enter"; title: string; body: string; touch?: string }[] = [
+  { on: "note", title: "Say it, don't draw it", body: "Press / and type  note buy milk; call mum  — then Enter.", touch: "Type  /note buy milk; call mum  in the box below, then tap ↵." },
   { on: "world", title: "Make a doorway", body: "Select a few things and press ✦ Make it a world — or drag one picture onto another." },
   { on: "enter", title: "Step inside", body: "Scroll to zoom into the doorway — or press Alt+↓. Zoom far back out to return." },
 ];
@@ -682,7 +682,7 @@ export function Tour({ enabled }: { enabled: boolean }) {
         Try it · {step + 1} of {STEPS.length}
       </small>
       <b>{s.title}</b>
-      <span>{s.body}</span>
+      <span>{(s.touch && window.matchMedia?.("(pointer: coarse)").matches ? s.touch : s.body)}</span>
       <div>
         <button className="chip ghost" onClick={() => save(step + 1)} data-testid="tour-next">
           Skip step
