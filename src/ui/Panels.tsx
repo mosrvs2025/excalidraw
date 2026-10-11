@@ -627,3 +627,70 @@ export function QuickNote({ x, y, bg, border, onCommit, onClose }: { x: number; 
     </div>
   );
 }
+
+/* ───────── first-run tour: three real moments, advanced by what you actually do ───────── */
+
+const TOUR_KEY = "lumen:tour";
+const STEPS: { on: "note" | "world" | "enter"; title: string; body: string }[] = [
+  { on: "note", title: "Say it, don't draw it", body: "Press / and type  note buy milk; call mum  — then Enter." },
+  { on: "world", title: "Make a doorway", body: "Select a few things and press ✦ Make it a world — or drag one picture onto another." },
+  { on: "enter", title: "Step inside", body: "Scroll to zoom into the doorway — or press Alt+↓. Zoom far back out to return." },
+];
+export const tourEvent = (kind: "note" | "world" | "enter") => window.dispatchEvent(new CustomEvent("lumen:tour", { detail: kind }));
+
+export function Tour({ enabled }: { enabled: boolean }) {
+  const read = (): number => {
+    try {
+      const v = localStorage.getItem(TOUR_KEY);
+      return v === null ? 0 : Number(v);
+    } catch {
+      return 99;
+    }
+  };
+  const [step, setStep] = useState(read);
+  const save = (n: number) => {
+    setStep(n);
+    try {
+      localStorage.setItem(TOUR_KEY, String(n));
+    } catch {}
+  };
+  useEffect(() => {
+    const on = (e: Event) => {
+      const kind = (e as CustomEvent<string>).detail;
+      setStep((s) => {
+        if (s >= STEPS.length || STEPS[s].on !== kind) return s;
+        try {
+          localStorage.setItem(TOUR_KEY, String(s + 1));
+        } catch {}
+        return s + 1;
+      });
+    };
+    window.addEventListener("lumen:tour", on);
+    return () => window.removeEventListener("lumen:tour", on);
+  }, []);
+  if (!enabled || step >= STEPS.length) {
+    return step === STEPS.length && enabled ? (
+      <div className="tour done" role="status" data-testid="tour-done" onAnimationEnd={() => save(STEPS.length + 1)}>
+        <b>✦ That's the whole trick.</b> Notes, doorways, zoom. Press <kbd>?</kbd> for every shortcut.
+      </div>
+    ) : null;
+  }
+  const s = STEPS[step];
+  return (
+    <div className="tour" role="status" data-testid="tour" onPointerDown={(e) => e.stopPropagation()}>
+      <small>
+        Try it · {step + 1} of {STEPS.length}
+      </small>
+      <b>{s.title}</b>
+      <span>{s.body}</span>
+      <div>
+        <button className="chip ghost" onClick={() => save(step + 1)} data-testid="tour-next">
+          Skip step
+        </button>
+        <button className="chip ghost" onClick={() => save(99)} data-testid="tour-skip">
+          End tour
+        </button>
+      </div>
+    </div>
+  );
+}

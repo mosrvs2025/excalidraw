@@ -1,3 +1,4 @@
+import { flushSync } from "react-dom";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Suggestion } from "../ai/intents";
 import { filterSlash, parseSlash, resolveSlash, type SlashCommand } from "./slash";
@@ -117,9 +118,17 @@ export function Dock(p: DockProps) {
   // "/" elsewhere in the app opens this box with the menu; Alt+1…9 runs the Nth suggestion
   useEffect(() => {
     const ask = (e: Event) => {
-      setText((e as CustomEvent<string>).detail ?? "");
-      setSel(0);
-      p.inputRef.current?.focus();
+      const v = (e as CustomEvent<string>).detail ?? "";
+      // commit synchronously: a render still queued from before would otherwise reset the box and eat the "/"
+      flushSync(() => {
+        setText(v);
+        setSel(0);
+      });
+      const el = p.inputRef.current;
+      if (el) {
+        el.focus();
+        el.setSelectionRange(v.length, v.length);
+      }
     };
     const chip = (e: KeyboardEvent) => {
       if (!e.altKey || e.metaKey || e.ctrlKey || p.busy) return;

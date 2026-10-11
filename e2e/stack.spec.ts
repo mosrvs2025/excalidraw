@@ -184,7 +184,54 @@ test.describe("saved views", () => {
     await page.evaluate(() => (window as any).__lumen.api.updateScene({ appState: { scrollX: 900, scrollY: 700, zoom: { value: 0.4 } }, captureUpdate: "NEVER" }));
     await page.keyboard.press("Control+k");
     await page.locator('[data-testid="palette-input"]').fill("view: overview");
+    await expect(page.locator('[data-testid="palette"] li.on')).toContainText("View: Overview");
     await page.keyboard.press("Enter");
     await expect.poll(async () => Math.abs((await cam()).z - home.z) < 0.02 && Math.abs((await cam()).x - home.x) < 3, { timeout: 5000 }).toBe(true);
+  });
+});
+
+test.describe("first-run tour", () => {
+  test("follows what you do: note → world → enter, then wraps up", async ({ page }) => {
+    await openApp(page, "/", { tour: true });
+    await expect(page.locator('[data-testid="tour"]')).toContainText("1 of 3");
+    await page.locator("body").click({ position: { x: 600, y: 300 } });
+    await page.keyboard.press("/");
+    await page.keyboard.type("note buy milk; call mum");
+    await page.keyboard.press("Enter");
+    await expect(page.locator('[data-testid="tour"]')).toContainText("2 of 3");
+    await page.evaluate(() => {
+      const L = (window as any).__lumen;
+      L.api.updateScene({ appState: { selectedElementIds: Object.fromEntries(L.api.getSceneElements().map((e: any) => [e.id, true])) }, captureUpdate: "NEVER" });
+    });
+    await page.locator('[data-testid="intent-world"]').click();
+    await expect(page.locator('[data-testid="tour"]')).toContainText("3 of 3");
+    await page.locator('[data-testid="action-enter"]').click();
+    await expect(page.locator('[data-testid="tour-done"]')).toBeVisible({ timeout: 8000 });
+    await page.reload();
+    await page.waitForFunction(() => (window as any).__lumen?.api);
+    await expect(page.locator('[data-testid="tour"]')).toHaveCount(0);
+  });
+  test("can be ended for good", async ({ page }) => {
+    await openApp(page, "/", { tour: true });
+    await page.locator('[data-testid="tour-skip"]').click();
+    await expect(page.locator('[data-testid="tour"]')).toHaveCount(0);
+  });
+});
+
+test.describe("on a phone", () => {
+  test.use({ viewport: { width: 390, height: 780 }, hasTouch: true, isMobile: true });
+  test("slash menu, tour and offers stay on screen; nothing scrolls sideways", async ({ page }) => {
+    await openApp(page, "/", { tour: true });
+    await page.locator('[data-testid="intent-input"]').fill("/");
+    const menu = page.locator('[data-testid="slash-menu"]');
+    await expect(menu).toBeVisible();
+    const box = (await menu.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(391);
+    const tour = (await page.locator('[data-testid="tour"]').boundingBox())!;
+    expect(tour.x).toBeGreaterThanOrEqual(0);
+    expect(tour.x + tour.width).toBeLessThanOrEqual(391);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(391);
+    await shot(page, "53-mobile-slash");
   });
 });

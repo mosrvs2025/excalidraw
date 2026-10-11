@@ -43,6 +43,13 @@ It works **with no API key**. Add one (or deploy with a server key) and Claude t
 | **Worlds (infinite zoom)** | Any drawing can become a doorway: select it → **Make it a world** (or *New world here*). A portal shows a living preview of the board inside; **zoom into it and you step through** (warm veil, soft arrival), zoom far back out and you return, looking at the doorway you came through. A trail shows where you are (*Home › Planet › Town*), worlds nest as deep as you like, and each is an ordinary board (history, templates, AI, export all work inside). Also: *Enter ↘* / Alt+↓, Alt+↑ to go up, a "keep zooming out" cue as you approach the edge, and a ✦ demo universe on first run. |
 | **Stack pictures into a world** | Drag a picture onto another: the target glows (*Drop to stack*). Let go and a chip offers **Stack into a world ↵** — the pictures fan into a loose pile, a burst of light, and they become a world (“Stack of 3”) that opens with everything laid out in a grid. One undo. |
 | **Type things, Notion-style** | Press **/** to talk to the canvas, or just start a slash line: `/note buy milk; call mum` adds two stickies, `/h1`, `/todo`, `/date`, `/flow`, `/cluster`, `/kanban`… (↑↓ Tab to pick). **⌘↵** adds whatever you typed as a note. **N** opens rapid-fire sticky notes (↵ adds and keeps going). **?** shows every shortcut; **Alt+1…9** runs the Nth suggestion. |
+| **Drop into a world** | Drag anything onto a doorway: it glows (*Drop into …*), you confirm with ↵, and everything shrinks through the portal, lands inside that world (beside what's there) and the preview refreshes. |
+| **Pile / spread** | `/pile` gathers a selection into a loose stack, `/spread` lays it out in a grid — one undo each, no world needed. |
+| **Find anywhere** | ⌘K also searches text on this board *and inside every world*; picking a result flies you there (zooming through the doorway if needed). |
+| **Saved views** | `/view Overview` bookmarks the camera; ⌘K → *View: Overview* glides back (zoom-aware easing). |
+| **Worlds travel** | Share links now carry the worlds inside (up to 60, nested) and re-point portals on the receiving side. *Back up everything* / *Restore from backup* (⌘K) export every board, world and picture as one file. |
+| **Offline summarize** | “summarize this” works with no key: recurring themes + the most representative lines. |
+| **A tour that watches you** | Three small cards on first run — add a note, make a world, step inside — each advances when you actually do it. Skippable. |
 | **Collab-ready architecture** | A `SyncAdapter` interface. Today's adapter is `BroadcastChannel`: live multi-tab collaboration with presence and cursors, using Excalidraw's `reconcileElements` for conflict-free merges. A WebSocket / Yjs adapter is a drop-in (`src/store/sync.ts`). |
 
 ---
@@ -161,6 +168,6 @@ The e2e suite exercises real pointer drawing, every intent chip, undo, animated 
 - **OCR is best on printed text/screenshots**; handwriting is unreliable offline (an AI key reads it much better).
 - Live objects can't make network calls (sandbox + no external resources by design) and keep state as JSON ≤ 400 KB.
 - Auto-layout is dagre/mind-map based; very large graphs (>80 nodes) are truncated by `sanitizePlan`.
-- **Worlds:** a world lives where it was made — a shared link or live room carries the board you're on, not the worlds inside it (portals show "not on this device"). Previews draw nested live objects/worlds as simple cards. Undo history is per board session (use *Version history* to undo across a visit). Deleting a board deletes the worlds inside it.
+- **Worlds:** share *links* carry the worlds inside (pictures excluded, size-capped); live rooms still sync only the board you're on, so portals there show "not on this device". Moving things into a world copies them there; Undo restores the parent but doesn't remove them from the world. Previews draw nested live objects/worlds as simple cards. Undo history is per board session (use *Version history* to undo across a visit). Deleting a board deletes the worlds inside it.
 - Excalidraw's own side panel overlaps the canvas on selection (upstream behaviour); the dock repositions around it but can't move it.
 - The hosted proxy's rate limit is per-instance memory (use a durable store for strict limits).

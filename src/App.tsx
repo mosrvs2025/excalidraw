@@ -64,7 +64,7 @@ import { withStandIns } from "./worlds/standins";
 import { findFreeSpot } from "./canvas/placement";
 import { collectWorlds, importBundle } from "./store/bundle";
 import { searchElements } from "./store/search";
-import { ShortcutsDialog, QuickNote } from "./ui/Panels";
+import { ShortcutsDialog, QuickNote, Tour, tourEvent } from "./ui/Panels";
 import type { SlashCommand } from "./ui/slash";
 import { splitItems } from "./ui/slash";
 import { dropTarget, easeOutBack, gridLayout, pileLayout, type Box } from "./worlds/stack";
@@ -676,6 +676,7 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
         setTimeout(() => api.scrollToContent(el as any, { fitToViewport: true, viewportZoomFactor: 0.5, animate: true, duration: 800, maxZoom: 30 }), 140);
       }
     }
+    if (arrival === "down") setTimeout(() => tourEvent("enter"), 900);
     if (worldBus.focus) {
       const id = worldBus.focus;
       worldBus.focus = null;
@@ -756,6 +757,7 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
       } else notifyPreview(child.id, null);
     } catch {}
     onWorldsChanged();
+    tourEvent("world");
     say(fromSelection ? `“${name}” is now a world.` : "A new world.", { note: "Zoom into it — or press Enter ↘ — and draw anything inside.", undo: true });
   };
 
@@ -1733,6 +1735,7 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
     placed.sk.forEach((k: any) => ((k.x += spot.x - Math.min(...xs)), (k.y += spot.y - Math.min(...ys))));
     const made = await insertSkeleton(a, placed.sk);
     select(a, made.map((m) => m.id));
+    tourEvent("note");
   };
   const addText = async (text: string, fontSize: number) => {
     const a = apiRef.current;
@@ -1774,7 +1777,7 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
 
   const commands: Command[] = [
     { id: "saveview", label: "Save this view…", hint: "bookmark the camera", keywords: "bookmark position", run: () => saveView(window.prompt("Name this view", `View ${views.length + 1}`) ?? "") },
-    ...views.flatMap((v) => [{ id: `v-${v.name}`, label: `View: ${v.name}`, hint: "fly there", keywords: "bookmark go", run: () => void goView(v) }, { id: `vd-${v.name}`, label: `Delete view: ${v.name}`, keywords: "remove bookmark", run: () => storeViews(views.filter((x) => x.name !== v.name)) }]),
+    ...views.flatMap((v) => [{ id: `v-${v.name}`, label: `View: ${v.name}`, hint: "fly there", keywords: "bookmark go", run: () => void goView(v) }, { id: `vd-${v.name}`, label: `Remove bookmark ${v.name}`, keywords: "remove bookmark", run: () => storeViews(views.filter((x) => x.name !== v.name)) }]),
     { id: "pile", label: "Pile up selection", keywords: "stack gather", run: () => void pileSelection() },
     { id: "spread", label: "Spread out selection", keywords: "unstack fan grid", run: () => void spreadSelection() },
     { id: "shortcuts", label: "Keyboard shortcuts", hint: "?", keywords: "keys help hotkeys", run: () => setShortcutsOpen(true) },
@@ -2119,7 +2122,7 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
 
       {halo && <div className="drophalo" style={{ left: halo.x - 8, top: halo.y - 8, width: halo.w + 16, height: halo.h + 16 }} aria-hidden data-testid="drophalo"><span>{halo.label}</span></div>}
       {offer && (
-        <div className="stackoffer" style={{ left: Math.min(Math.max(8, offer.rect.x + offer.rect.w / 2), window.innerWidth - 8), top: Math.min(offer.rect.y + offer.rect.h + 14, window.innerHeight - 120) }} onPointerDown={(e) => e.stopPropagation()} data-testid="stackoffer">
+        <div className="stackoffer" style={{ left: Math.min(Math.max(Math.min(150, window.innerWidth / 2), offer.rect.x + offer.rect.w / 2), window.innerWidth - Math.min(150, window.innerWidth / 2)), top: Math.min(offer.rect.y + offer.rect.h + 14, window.innerHeight - 120) }} onPointerDown={(e) => e.stopPropagation()} data-testid="stackoffer">
           <button className="chip primary" onClick={() => void acceptOffer(offer)} data-testid="stack-go"><i>{offer.portalId ? "↘" : "🗂"}</i>{offer.portalId ? `Move into ${offer.name}` : "Stack into a world"}<kbd>↵</kbd></button>
           <button className="chip ghost" onClick={() => setOffer(null)} aria-label="Dismiss"><kbd>Esc</kbd></button>
         </div>
@@ -2159,6 +2162,7 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
           onClose={() => setRenameWorld(null)}
         />
       )}
+      <Tour enabled={slide === null && !onboard && !empty ? true : slide === null && !onboard} />
       {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
       {quick && <QuickNote x={Math.round(window.innerWidth / 2 - 110)} y={Math.round(window.innerHeight / 2 - 80)} bg="#fff3bf" border="#e19b00" onCommit={(t) => void addNotes([t])} onClose={() => setQuick(false)} />}
       {palette && <CommandPalette search={searchEverywhere} commands={commands} onAsk={(t) => run(t)} onClose={() => setPalette(false)} />}
