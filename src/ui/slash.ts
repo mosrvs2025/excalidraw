@@ -5,7 +5,7 @@
 export interface SlashCommand {
   id: string;
   label: string;
-  hint: string;
+  hint?: string;
   icon: string;
   group: "Add" | "Transform" | "Boards" | "Worlds" | "Go";
   aliases?: string[];

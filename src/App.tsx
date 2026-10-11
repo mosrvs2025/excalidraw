@@ -61,6 +61,11 @@ import { AgentDialog, CommandPalette, Expanded, HistoryPanel, LiveEditor, Onboar
 import { TEMPLATES_LIST } from "./ai/local";
 import { worldBus, notifyPreview, touchWorld } from "./worlds/bus";
 import { withStandIns } from "./worlds/standins";
+import { findFreeSpot } from "./canvas/placement";
+import { ShortcutsDialog, QuickNote } from "./ui/Panels";
+import type { SlashCommand } from "./ui/slash";
+import { splitItems } from "./ui/slash";
+import { dropTarget, easeOutBack, gridLayout, pileLayout, type Box } from "./worlds/stack";
 import { coverage, exitProgress, fitZoom, shouldDive, shouldExit } from "./worlds/geometry";
 
 const CURRENT_KEY = "lumen:current";
@@ -263,6 +268,14 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
   const [palette, setPalette] = useState(false);
   const [renameWorld, setRenameWorld] = useState<null | { id: string; name: string; portalId?: string }>(null);
   const [exitHint, setExitHint] = useState(0);
+  // dropping pictures on pictures: a halo while you hover, an offer when you let go, a burst when the world appears
+  type Spot = { x: number; y: number; w: number; h: number };
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [quick, setQuick] = useState(false);
+  const [halo, setHalo] = useState<Spot | null>(null);
+  const [offer, setOffer] = useState<{ ids: string[]; rect: Spot } | null>(null);
+  const [burst, setBurst] = useState<{ x: number; y: number; k: number } | null>(null);
+  const dragWas = useRef<{ dragging: boolean; target: string | null; ids: string[] }>({ dragging: false, target: null, ids: [] });
   const [editImg, setEditImg] = useState(false);
   const [agentDlg, setAgentDlg] = useState(false);
   const [gallery, setGallery] = useState(false);
@@ -661,7 +674,7 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
   }, [api]);
 
   /** Wrap the current selection (or nothing) into a brand-new world and leave a portal in its place. */
-  const makeWorld = async (fromSelection: boolean) => {
+  const makeWorld = async (fromSelection: boolean, opts: { name?: string; arrange?: (els: ExcalidrawElement[]) => ExcalidrawElement[] } = {}) => {
     const a = apiRef.current;
     if (!a) return;
     const all = a.getSceneElementsIncludingDeleted();
@@ -689,11 +702,11 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
     const px = (x1 + x2) / 2 - w / 2;
     const py = (y1 + y2) / 2 - h / 2;
     const guess = moved.map((e) => (e as any).originalText ?? (e as any).text).find((t) => typeof t === "string" && t.trim());
-    const name = (guess ? String(guess).replace(/\s+/g, " ").trim().slice(0, 28) : "New world") || "New world";
+    const name = opts.name ?? ((guess ? String(guess).replace(/\s+/g, " ").trim().slice(0, 28) : "New world") || "New world");
     const portalId = uid("w");
     const files = a.getFiles();
     const usedFiles = Object.fromEntries(moved.filter((e) => e.type === "image" && (e as any).fileId).map((e) => [(e as any).fileId, files[(e as any).fileId]]).filter(([, f]) => f));
-    const child = await createProject(name, { elements: JSON.parse(JSON.stringify(moved)), files: usedFiles }, { parentId: meta.id, portalId });
+    const child = await createProject(name, { elements: JSON.parse(JSON.stringify(opts.arrange ? opts.arrange(moved) : moved)), files: usedFiles }, { parentId: meta.id, portalId });
     const [portal] = restoreElements(
       [{ type: "embeddable", id: portalId, x: px, y: py, width: w, height: h, link: `${LIVE_HOST}/o/${portalId}`, strokeColor: "#7048e8", strokeWidth: 2, backgroundColor: "transparent", roundness: { type: 3 }, customData: { lumen: { kind: "portal", title: name, childId: child.id } } } as any],
       null,
@@ -726,6 +739,94 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
     } catch {}
     onWorldsChanged();
     say(fromSelection ? `“${name}” is now a world.` : "A new world.", { note: "Zoom into it — or press Enter ↘ — and draw anything inside.", undo: true });
+  };
+
+
+  /* ───────── stacking pictures ───────── */
+  const boxOf = (e: ExcalidrawElement): Box => ({ id: e.id, x: e.x, y: e.y, width: e.width, height: e.height });
+  const viewRect = (b: { x: number; y: number; width: number; height: number }, st: AppState): Spot => {
+    const p = sceneCoordsToViewportCoords({ sceneX: b.x, sceneY: b.y }, st);
+    const q = sceneCoordsToViewportCoords({ sceneX: b.x + b.width, sceneY: b.y + b.height }, st);
+    return { x: Math.round(p.x), y: Math.round(p.y), w: Math.round(q.x - p.x), h: Math.round(q.y - p.y) };
+  };
+
+  /** Called from onChange: show a halo on the picture you're hovering while dragging, and an offer when you drop. */
+  const stackWatch = (elements: readonly ExcalidrawElement[], st: AppState) => {
+    const w = dragWas.current;
+    const dragging = st.selectedElementsAreBeingDragged;
+    if (dragging) {
+      const ids = Object.keys(st.selectedElementIds).filter((k) => st.selectedElementIds[k]);
+      const live = elements.filter((e) => !e.isDeleted);
+      const moving = live.filter((e) => ids.includes(e.id) && e.type === "image");
+      const target = moving.length ? dropTarget(moving.map(boxOf), live.filter((e) => e.type === "image").map(boxOf)) : null;
+      const id = target?.id ?? null;
+      if (id !== w.target) {
+        w.target = id;
+        const el = id ? live.find((e) => e.id === id) : null;
+        setHalo(el ? viewRect(el, st) : null);
+      }
+      w.ids = moving.map((e) => e.id);
+    } else if (w.dragging) {
+      const t = w.target;
+      w.target = null;
+      setHalo(null);
+      if (t && w.ids.length) {
+        const live = elements.filter((e) => !e.isDeleted && (e.id === t || w.ids.includes(e.id)));
+        const [x1, y1, x2, y2] = getCommonBounds(live);
+        setOffer({ ids: [...w.ids, t], rect: viewRect({ x: x1, y: y1, width: x2 - x1, height: y2 - y1 }, st) });
+      }
+    }
+    w.dragging = dragging;
+  };
+  const stackWatchRef = useRef(stackWatch);
+  stackWatchRef.current = stackWatch;
+
+  /** Tidy the pictures into a pile (with a little bounce), then fold the pile into a world. */
+  const stackIntoWorld = async (ids: string[]) => {
+    const a = apiRef.current;
+    if (!a) return;
+    setOffer(null);
+    const all = a.getSceneElements();
+    const imgs = all.filter((e) => ids.includes(e.id) && !e.isDeleted);
+    if (imgs.length < 2) return;
+    const [x1, y1, x2, y2] = getCommonBounds(imgs);
+    const at = { x: (x1 + x2) / 2, y: (y1 + y2) / 2 };
+    const from = imgs.map((e) => ({ id: e.id, x: e.x, y: e.y, angle: e.angle }));
+    const to = pileLayout(imgs.map(boxOf), at);
+    const sel = Object.fromEntries(ids.map((i) => [i, true]));
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const frames = reduce ? 1 : 16;
+    for (let f = 1; f <= frames; f++) {
+      const t = easeOutBack(f / frames);
+      const cur = apiRef.current;
+      if (!cur) return;
+      cur.updateScene({
+        elements: cur.getSceneElementsIncludingDeleted().map((e) => {
+          const i = from.findIndex((q) => q.id === e.id);
+          if (i < 0) return e;
+          return newElementWith(e, { x: from[i].x + (to[i].x - from[i].x) * t, y: from[i].y + (to[i].y - from[i].y) * t, angle: (from[i].angle + (to[i].angle - from[i].angle) * t) as any });
+        }),
+        appState: { selectedElementIds: sel } as any,
+        captureUpdate: CaptureUpdateAction.NEVER,
+      });
+      if (!reduce) await sleep(22);
+    }
+    const c = sceneCenter(a);
+    void c;
+    const p = sceneCoordsToViewportCoords({ sceneX: at.x, sceneY: at.y }, a.getAppState());
+    setBurst({ x: p.x, y: p.y, k: Date.now() });
+    setTimeout(() => setBurst(null), 1100);
+    await makeWorld(true, {
+      name: `Stack of ${imgs.length}`,
+      arrange: (els) => {
+        // inside the world, lay the pictures out so nothing hides anything
+        const spots = gridLayout(els.map(boxOf), 40);
+        return els.map((e) => {
+          const s = spots.find((q) => q.id === e.id);
+          return s ? ({ ...e, x: s.x, y: s.y, angle: 0 } as ExcalidrawElement) : e;
+        });
+      },
+    });
   };
 
   /** A tiny three-level universe so the idea lands in ten seconds. */
@@ -777,6 +878,7 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
       if (!alive.current) return; // this board has been left; ignore the canvas's death throes
       updateSelection(elements, appState);
       worldTickRef.current(elements, appState);
+      stackWatchRef.current(elements, appState);
       const view = { scrollX: appState.scrollX, scrollY: appState.scrollY, zoom: appState.zoom.value };
       const viewChanged = !viewRef.current || viewRef.current.scrollX !== view.scrollX || viewRef.current.scrollY !== view.scrollY || viewRef.current.zoom !== view.zoom;
       viewRef.current = view;
@@ -803,6 +905,16 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
     [autosaver, persist, publishScene, thumbnail, updateSelection, checkpoint],
   );
 
+  const offerRef = useRef(offer);
+  offerRef.current = offer;
+  const stackRef = useRef(stackIntoWorld);
+  stackRef.current = stackIntoWorld;
+  useEffect(() => {
+    if (!offer) return;
+    const t = setTimeout(() => setOffer(null), 9000);
+    return () => clearTimeout(t);
+  }, [offer]);
+
   /* ───────── keyboard: "/" or ⌘K to talk to the canvas ───────── */
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
@@ -821,9 +933,24 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
         const ids = a ? Object.keys(a.getAppState().selectedElementIds) : [];
         const el = a?.getSceneElements().find((x) => ids.includes(x.id) && isPortal(x));
         if (el) void diveInto(el as ExcalidrawEmbeddableElement, false);
+      } else if (offerRef.current && !typing && (e.key === "Enter" || e.key === "Escape")) {
+        e.preventDefault();
+        e.stopPropagation();
+        const o = offerRef.current;
+        if (e.key === "Enter") void stackRef.current(o.ids);
+        else setOffer(null);
       } else if (e.key === "/" && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
-        inputRef.current?.focus();
+        e.stopPropagation();
+        window.dispatchEvent(new CustomEvent("lumen:ask", { detail: "/" }));
+      } else if (e.key === "?" && !typing && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        setShortcutsOpen((o) => !o);
+      } else if ((e.key === "n" || e.key === "N") && !typing && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        e.stopPropagation();
+        setQuick(true);
       }
     };
     window.addEventListener("keydown", k, true);
@@ -1321,7 +1448,58 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /* ───────── typing straight onto the canvas ───────── */
+  const addNotes = async (texts: string[]) => {
+    const a = apiRef.current;
+    const items = texts.map((t) => t.trim()).filter(Boolean);
+    if (!a || !items.length) return;
+    await ensureFonts(items.join(" "));
+    const c = sceneCenter(a);
+    const placed = buildNotes({ op: "notes", items: items.map((text) => ({ text })) }, 0, 0);
+    const xs = placed.sk.map((k: any) => k.x), ys = placed.sk.map((k: any) => k.y);
+    const w = Math.max(...placed.sk.map((k: any) => k.x + (k.width ?? 200))) - Math.min(...xs);
+    const h = Math.max(...placed.sk.map((k: any) => k.y + (k.height ?? 130))) - Math.min(...ys);
+    const spot = findFreeSpot(a.getSceneElements(), w, h, c.x, c.y);
+    placed.sk.forEach((k: any) => ((k.x += spot.x - Math.min(...xs)), (k.y += spot.y - Math.min(...ys))));
+    const made = await insertSkeleton(a, placed.sk);
+    select(a, made.map((m) => m.id));
+  };
+  const addText = async (text: string, fontSize: number) => {
+    const a = apiRef.current;
+    if (!a || !text.trim()) return;
+    await ensureFonts(text);
+    const c = sceneCenter(a);
+    const made = await insertSkeleton(a, [{ type: "text", x: c.x - 120, y: c.y - fontSize, text: text.trim(), fontSize, fontFamily: 5 } as any]);
+    select(a, made.map((m) => m.id));
+  };
+  const slashCommands: SlashCommand[] = [
+    { id: "note", label: "Sticky note", hint: "one note per line (or ; separated)", icon: "▤", group: "Add", aliases: ["n", "sticky"], takesText: true, run: (t: string) => void addNotes(t ? splitItems(t) : ["New note"]) },
+    { id: "text", label: "Text", hint: "plain text on the canvas", icon: "Aa", group: "Add", aliases: ["t"], takesText: true, run: (t: string) => void addText(t || "Text", 22) },
+    { id: "h1", label: "Heading", hint: "big title", icon: "H1", group: "Add", takesText: true, run: (t: string) => void addText(t || "Heading", 44) },
+    { id: "h2", label: "Subheading", hint: "section title", icon: "H2", group: "Add", takesText: true, run: (t: string) => void addText(t || "Subheading", 30) },
+    { id: "todo", label: "Checklist", hint: "a working to-do, one item per line", icon: "☑", group: "Add", aliases: ["checklist", "list"], takesText: true, run: (t: string) => void run(t ? `a checklist: ${splitItems(t).join("; ")}` : "a checklist") },
+    { id: "date", label: "Today's date", hint: "stamp it", icon: "📅", group: "Add", run: () => void addText(new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" }), 26) },
+    { id: "flow", label: "Make a flow", hint: "structure the selection", icon: "⇢", group: "Transform", takesText: true, run: (t: string) => void run(t || "Arrange these as a flowchart in sequence", "flow") },
+    { id: "mindmap", label: "Mind map", hint: "branch the selection", icon: "✺", group: "Transform", run: () => void run("Turn these into a mind map", "mindmap") },
+    { id: "cluster", label: "Cluster", hint: "group notes into themes", icon: "▦", group: "Transform", run: () => void run("Group these into themes and label each theme", "cluster") },
+    { id: "review", label: "Find gaps", hint: "review a diagram", icon: "◎", group: "Transform", run: () => void run("Review this diagram for gaps, dead ends and unclear decisions", "review") },
+    { id: "explain", label: "Explain", hint: "what is this?", icon: "✦", group: "Transform", run: () => void run("Describe what this is and suggest next steps", "explain") },
+    { id: "app", label: "Make it real", hint: "turn it into a working prototype", icon: "▶", group: "Transform", takesText: true, run: (t: string) => void run(t || "Turn this into a working interactive prototype", "app") },
+    { id: "cutout", label: "Remove background", hint: "selected image", icon: "✂", group: "Transform", run: () => void run("Remove the background from this image", "cutout") },
+    ...TEMPLATES_LIST.map((t) => ({ id: t.id, label: t.label, hint: t.desc, icon: "▣", group: "Boards" as const, keywords: "template board", run: () => void useTemplate(t.id) })),
+    { id: "world", label: "Make it a world", hint: "selection → zoomable board", icon: "◍", group: "Worlds", run: () => void makeWorld(true) },
+    { id: "newworld", label: "New world here", hint: "a doorway to a fresh board", icon: "◌", group: "Worlds", run: () => void makeWorld(false) },
+    ...(parent ? [{ id: "up", label: `Up to ${parent.name}`, hint: "leave this world", icon: "↑", group: "Worlds" as const, run: () => void onExitWorld() }] : []),
+    { id: "present", label: "Present", hint: "frames → slides", icon: "▷", group: "Go", run: present },
+    { id: "history", label: "Version history", hint: "restore a checkpoint", icon: "⟲", group: "Go", run: openHistory },
+    { id: "share", label: "Copy share link", icon: "⤴", group: "Go", run: shareLink },
+    { id: "theme", label: "Toggle theme", icon: "◐", group: "Go", run: () => setTheme(theme === "dark" ? "light" : "dark") },
+    { id: "settings", label: "AI settings", icon: "⚙", group: "Go", run: () => setPanel("settings") },
+    { id: "shortcuts", label: "Keyboard shortcuts", hint: "?", icon: "⌨", group: "Go", aliases: ["keys", "help"], run: () => setShortcutsOpen(true) },
+  ];
+
   const commands: Command[] = [
+    { id: "shortcuts", label: "Keyboard shortcuts", hint: "?", keywords: "keys help hotkeys", run: () => setShortcutsOpen(true) },
     { id: "newworld", label: "New world here", hint: "a doorway to a fresh board", keywords: "portal zoom nested infinite", run: () => makeWorld(false) },
     { id: "makeworld", label: "Make selection a world", hint: "zoom into what you drew", keywords: "portal zoom nested infinite", run: () => makeWorld(true) },
     ...(parent ? [{ id: "up", label: `Go up to ${parent.name}`, hint: "Alt+↑", keywords: "back exit world", run: () => void onExitWorld() }] : []),
@@ -1655,8 +1833,18 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
         onCancel={() => abortRef.current?.abort()}
         mobile={mobile}
         inputRef={inputRef}
+        slash={slashCommands}
+        onNote={(t) => void addNotes(splitItems(t))}
       />}
 
+      {halo && <div className="drophalo" style={{ left: halo.x - 8, top: halo.y - 8, width: halo.w + 16, height: halo.h + 16 }} aria-hidden data-testid="drophalo"><span>Drop to stack</span></div>}
+      {offer && (
+        <div className="stackoffer" style={{ left: Math.min(Math.max(8, offer.rect.x + offer.rect.w / 2), window.innerWidth - 8), top: Math.min(offer.rect.y + offer.rect.h + 14, window.innerHeight - 120) }} onPointerDown={(e) => e.stopPropagation()} data-testid="stackoffer">
+          <button className="chip primary" onClick={() => void stackIntoWorld(offer.ids)} data-testid="stack-go"><i>🗂</i>Stack into a world<kbd>↵</kbd></button>
+          <button className="chip ghost" onClick={() => setOffer(null)} aria-label="Dismiss"><kbd>Esc</kbd></button>
+        </div>
+      )}
+      {burst && <div className="burst" key={burst.k} style={{ left: burst.x, top: burst.y }} aria-hidden>{Array.from({ length: 10 }, (_, i) => <i key={i} style={{ ["--a" as any]: `${i * 36}deg` }} />)}</div>}
       {toast && (
         <div className="toast" role="status" data-testid="toast" key={toast.id} style={mobile ? undefined : undefined}>
           <span>{toast.text}</span>
@@ -1691,6 +1879,8 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
           onClose={() => setRenameWorld(null)}
         />
       )}
+      {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
+      {quick && <QuickNote x={Math.round(window.innerWidth / 2 - 110)} y={Math.round(window.innerHeight / 2 - 80)} bg="#fff3bf" border="#e19b00" onCommit={(t) => void addNotes([t])} onClose={() => setQuick(false)} />}
       {palette && <CommandPalette commands={commands} onAsk={(t) => run(t)} onClose={() => setPalette(false)} />}
       {gallery && <TemplateGallery templates={TEMPLATES_LIST} onPick={useTemplate} onClose={() => setGallery(false)} />}
       {panel === "history" && <HistoryPanel versions={versions} current={api?.getSceneElementsIncludingDeleted() ?? []} onRestore={restore} onSave={async (l) => (await checkpoint(l, "manual"), setVersions(await listVersions(meta.id)), say(`Saved checkpoint “${l}”.`))} onClose={() => setPanel(null)} />}

@@ -1,5 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Suggestion } from "../ai/intents";
+import { filterSlash, parseSlash, resolveSlash, type SlashCommand } from "./slash";
+import { ALT, MOD } from "./shortcuts";
 
 export interface DockProps {
   /** viewport rect of the selection (null = canvas-level dock) */
@@ -12,6 +14,9 @@ export interface DockProps {
   engine: "claude" | "offline";
   engineLabel: string;
   onRun: (prompt: string, intent?: Suggestion["id"]) => void;
+  slash: SlashCommand[];
+  /** add the typed text to the canvas as a note (no interpretation) */
+  onNote: (text: string) => void;
   onEngineClick: () => void;
   onCancel: () => void;
   mobile: boolean;
@@ -23,6 +28,13 @@ export function Dock(p: DockProps) {
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
   const [text, setText] = useState("");
   const [listening, setListening] = useState(false);
+  const [sel, setSel] = useState(0);
+  const [focused, setFocused] = useState(false);
+  const sq = parseSlash(text);
+  const slashMatches = sq ? filterSlash(p.slash, sq.token) : [];
+  // the menu is for choosing a command; once you've typed a space you're giving it its text
+  const slashOpen = !!sq && slashMatches.length > 0 && !/\s/.test(text);
+  const chipCount = p.actions.length + p.suggestions.length;
   const recRef = useRef<any>(null);
   const SR = typeof window !== "undefined" ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition : null;
 
@@ -79,14 +91,54 @@ export function Dock(p: DockProps) {
     return () => window.removeEventListener("keydown", onKey);
   }, [p.busy]);
 
+  const reset = () => {
+    setText("");
+    setSel(0);
+    if (p.inputRef.current) p.inputRef.current.style.height = "auto";
+  };
   const submit = (e: { preventDefault: () => void }) => {
     e.preventDefault();
     const v = text.trim();
     if (!v || p.busy) return;
+    if (v.startsWith("/")) {
+      // "/note buy milk" runs exactly; "/no" runs the highlighted suggestion
+      const exact = resolveSlash(p.slash, v);
+      const cmd = exact?.cmd ?? slashMatches[Math.min(sel, slashMatches.length - 1)];
+      if (cmd) {
+        reset();
+        void cmd.run(exact ? exact.arg : "");
+        return;
+      }
+    }
     p.onRun(v);
-    setText("");
-    if (p.inputRef.current) p.inputRef.current.style.height = "auto";
+    reset();
   };
+
+  // "/" elsewhere in the app opens this box with the menu; Alt+1…9 runs the Nth suggestion
+  useEffect(() => {
+    const ask = (e: Event) => {
+      setText((e as CustomEvent<string>).detail ?? "");
+      setSel(0);
+      p.inputRef.current?.focus();
+    };
+    const chip = (e: KeyboardEvent) => {
+      if (!e.altKey || e.metaKey || e.ctrlKey || p.busy) return;
+      const m = /^Digit([1-9])$/.exec(e.code);
+      if (!m) return;
+      const idx = +m[1] - 1;
+      if (idx >= chipCount) return;
+      e.preventDefault();
+      const btn = ref.current?.querySelectorAll<HTMLButtonElement>(".chips .chip")[idx];
+      btn?.click();
+    };
+    window.addEventListener("lumen:ask", ask);
+    window.addEventListener("keydown", chip);
+    return () => {
+      window.removeEventListener("lumen:ask", ask);
+      window.removeEventListener("keydown", chip);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chipCount, p.busy]);
 
   return (
     <div
@@ -106,26 +158,57 @@ export function Dock(p: DockProps) {
         </div>
       ) : (
         <>
-          {(p.suggestions.length > 0 || p.actions.length > 0) && (
+          {slashOpen && (
+            <ul className="slashmenu" role="listbox" aria-label="Commands" data-testid="slash-menu">
+              {slashMatches.map((c, i) => (
+                <li
+                  key={c.id}
+                  role="option"
+                  aria-selected={i === sel}
+                  className={i === sel ? "on" : ""}
+                  onMouseEnter={() => setSel(i)}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    reset();
+                    void c.run("");
+                  }}
+                  data-testid={`slash-${c.id}`}
+                >
+                  <i>{c.icon}</i>
+                  <span className="n">
+                    /{c.id}
+                    {c.takesText && <em> text…</em>}
+                  </span>
+                  <small>{c.hint}</small>
+                </li>
+              ))}
+            </ul>
+          )}
+          {!slashOpen && chipCount > 0 && (
             <div className="chips" role="toolbar" aria-label="Suggested actions">
-              {p.actions.map((a) => (
-                <button key={a.id} className="chip" onClick={a.run} data-testid={`action-${a.id}`}>
+              {p.actions.map((a, i) => (
+                <button key={a.id} className="chip" onClick={a.run} data-testid={`action-${a.id}`} title={p.mobile ? undefined : `${ALT()}${i + 1}`}>
                   <i>{a.icon}</i>
                   {a.label}
+                  {!p.mobile && i < 9 && <kbd>{ALT()}{i + 1}</kbd>}
                 </button>
               ))}
-              {p.suggestions.map((s) => (
-                <button
-                  key={s.id + s.label}
-                  className={`chip ${s.primary ? "primary" : ""}`}
-                  onClick={() => p.onRun(s.prompt, s.id)}
-                  data-testid={`intent-${s.id}`}
-                  title={s.prompt}
-                >
-                  <i>{s.icon}</i>
-                  {s.label}
-                </button>
-              ))}
+              {p.suggestions.map((s, j) => {
+                const n = p.actions.length + j;
+                return (
+                  <button
+                    key={s.id + s.label}
+                    className={`chip ${s.primary ? "primary" : ""}`}
+                    onClick={() => p.onRun(s.prompt, s.id)}
+                    data-testid={`intent-${s.id}`}
+                    title={s.prompt}
+                  >
+                    <i>{s.icon}</i>
+                    {s.label}
+                    {!p.mobile && n < 9 && <kbd>{ALT()}{n + 1}</kbd>}
+                  </button>
+                );
+              })}
             </div>
           )}
           <form className="ask" onSubmit={submit}>
@@ -135,6 +218,7 @@ export function Dock(p: DockProps) {
               rows={1}
               onChange={(e) => {
                 setText(e.target.value);
+                setSel(0);
                 e.target.style.height = "auto";
                 e.target.style.height = Math.min(e.target.scrollHeight, 150) + "px";
               }}
@@ -144,10 +228,34 @@ export function Dock(p: DockProps) {
               enterKeyHint="go"
               autoComplete="off"
               spellCheck={false}
+              onFocus={() => setFocused(true)}
+              onBlur={() => setFocused(false)}
               onKeyDown={(e) => {
                 e.stopPropagation();
-                if (e.key === "Escape") (e.target as HTMLTextAreaElement).blur();
-                if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                if (e.nativeEvent.isComposing) return;
+                if (slashOpen && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+                  e.preventDefault();
+                  setSel((i) => (i + (e.key === "ArrowDown" ? 1 : slashMatches.length - 1)) % slashMatches.length);
+                  return;
+                }
+                if (slashOpen && e.key === "Tab" && !e.shiftKey) {
+                  e.preventDefault();
+                  const c = slashMatches[Math.min(sel, slashMatches.length - 1)];
+                  setText(`/${c.id}${c.takesText ? " " : ""}`);
+                  return;
+                }
+                if (e.key === "Escape") {
+                  if (slashOpen || text) (reset(), e.preventDefault());
+                  else (e.target as HTMLTextAreaElement).blur();
+                  return;
+                }
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  const v = text.trim();
+                  if (v && !p.busy) (p.onNote(v), reset());
+                  return;
+                }
+                if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
                   submit(e);
                 }
@@ -165,6 +273,14 @@ export function Dock(p: DockProps) {
               ↵
             </button>
           </form>
+          {focused && !p.mobile && (
+            <div className="ask-hint" aria-hidden>
+              <span><kbd>↵</kbd> do it</span>
+              <span><kbd>{MOD()}↵</kbd> add as note</span>
+              <span><kbd>/</kbd> commands</span>
+              <span><kbd>?</kbd> shortcuts</span>
+            </div>
+          )}
         </>
       )}
     </div>
