@@ -62,6 +62,7 @@ import { TEMPLATES_LIST } from "./ai/local";
 import { worldBus, notifyPreview, touchWorld } from "./worlds/bus";
 import { withStandIns } from "./worlds/standins";
 import { findFreeSpot } from "./canvas/placement";
+import { collectWorlds, importBundle } from "./store/bundle";
 import { searchElements } from "./store/search";
 import { ShortcutsDialog, QuickNote } from "./ui/Panels";
 import type { SlashCommand } from "./ui/slash";
@@ -168,10 +169,13 @@ export default function App() {
       }
       const shared = await decodeBoard(location.hash);
       if (shared) {
-        const p = await createProject(shared.name, { elements: shared.elements, files: {} });
+        const rootId = await importBundle(
+          { name: shared.name, elements: shared.elements, worlds: shared.worlds },
+          { create: (n, d, rel) => createProject(n, d as any, rel), save: (id, d) => saveProject(id, d as any) },
+        );
         history.replaceState(null, "", location.pathname + location.search);
         projects = await listProjects();
-        await open(p.id, projects);
+        await open(rootId, projects);
         return;
       }
       if (!projects.length) projects = [await createProject("My first board")];
@@ -1368,11 +1372,22 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
   const shareLink = async () => {
     const a = apiRef.current;
     if (!a) return;
-    const link = location.origin + location.pathname + (await encodeBoard(a.getSceneElementsIncludingDeleted(), name));
+    const els = a.getSceneElementsIncludingDeleted();
+    const worlds = await collectWorlds(els, async (id) => {
+      const d = await loadProject(id);
+      const m = await getProjectMeta(id);
+      return d && m ? { name: m.name, elements: d.elements as any[] } : null;
+    });
+    let link = location.origin + location.pathname + (await encodeBoard(els, name, worlds));
+    let withWorlds = worlds.length;
+    if (link.length > MAX_LINK_CHARS && worlds.length) {
+      link = location.origin + location.pathname + (await encodeBoard(els, name));
+      withWorlds = 0;
+    }
     if (link.length > MAX_LINK_CHARS) return say("Too big for a link.", { note: "Export the file instead (menu → Export)." });
     try {
       await navigator.clipboard.writeText(link);
-      say("Share link copied.", { note: "Anyone with it gets their own copy — the board is inside the link, not on a server." });
+      say("Share link copied.", { note: withWorlds ? `Includes ${withWorlds} world${withWorlds > 1 ? "s" : ""} — they open for whoever gets it. Pictures aren't included in links.` : worlds.length ? "Too big to carry its worlds — doorways will say “not on this device”." : "Anyone with it gets their own copy — the board is inside the link, not on a server." });
     } catch {
       window.prompt("Copy this link", link);
     }
@@ -1590,6 +1605,49 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
       say("Couldn't use that file.", { note: String(e?.message ?? e).slice(0, 140) });
     }
   };
+
+  /** Everything on this device (boards, worlds, pictures) as one file — and back again. */
+  const backupAll = async () => {
+    await autosaver.flush();
+    const tops = (await listProjects()).filter((p) => !p.parentId);
+    const boards = [];
+    for (const t of tops) {
+      const d = await loadProject(t.id);
+      if (!d) continue;
+      const worlds = await collectWorlds(d.elements as any[], async (id) => {
+        const c = await loadProject(id);
+        const m = await getProjectMeta(id);
+        return c && m ? { name: m.name, elements: c.elements as any[], files: c.files as any } : null;
+      }, { files: true, max: 500 });
+      boards.push({ name: t.name, elements: (d.elements as any[]).filter((e) => !e.isDeleted), files: d.files, worlds });
+    }
+    downloadText(`lumen-backup-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify({ lumenBackup: 1, boards }), "application/json");
+    say(`Backed up ${boards.length} board${boards.length === 1 ? "" : "s"}.`, { note: "One file with every world and picture. Restore it from ⌘K → “Restore from backup”." });
+  };
+  const restoreBackup = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".json,application/json";
+    input.onchange = async () => {
+      const f = input.files?.[0];
+      if (!f) return;
+      try {
+        const data = JSON.parse(await f.text());
+        if (data?.lumenBackup !== 1 || !Array.isArray(data.boards)) return say("That isn't a Lumen backup.");
+        let n = 0;
+        for (const b of data.boards.slice(0, 200)) {
+          await importBundle({ name: String(b.name || "Restored board"), elements: b.elements ?? [], files: b.files ?? {}, worlds: b.worlds ?? [] }, { create: (nm, d, rel) => createProject(nm, d as any, rel), save: (id, d) => saveProject(id, d as any) });
+          n++;
+        }
+        onWorldsChanged();
+        say(`Restored ${n} board${n === 1 ? "" : "s"}.`, { note: "They're in the project list (the name in the top-left)." });
+      } catch {
+        say("Couldn't read that file.");
+      }
+    };
+    input.click();
+  };
+
   const pickDataFile = () => {
     const input = document.createElement("input");
     input.type = "file";
@@ -1687,6 +1745,8 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
     { id: "live", label: room ? "Stop live sharing" : "Share live…", keywords: "collaborate realtime room", run: room ? leaveLive : shareLive },
     { id: "agent", label: "Connect an AI agent…", hint: "Claude Desktop, Cursor (MCP)", keywords: "mcp agent claude cursor", run: connectAgent },
     { id: "data", label: "Add data (CSV / JSON)…", keywords: "chart table csv", run: pickDataFile },
+    { id: "backup", label: "Back up everything", hint: "all boards, worlds, pictures → one file", keywords: "export save download", run: backupAll },
+    { id: "restore", label: "Restore from backup…", keywords: "import", run: restoreBackup },
     { id: "pdf", label: "Export as PDF", hint: "one page per frame", keywords: "print pdf", run: exportPdf },
     { id: "md", label: "Export as Markdown", run: exportMarkdown },
     { id: "jc", label: "Export as JSON Canvas", hint: "Obsidian", run: exportJsonCanvasFile },

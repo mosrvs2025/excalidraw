@@ -104,6 +104,31 @@ test.describe("sharing", () => {
   });
 });
 
+test.describe("sharing worlds", () => {
+  test("a share link carries the worlds inside, and their doorways open for the receiver", async ({ browser }) => {
+    const a = await (await browser.newContext({ permissions: ["clipboard-read", "clipboard-write"] })).newPage();
+    await openApp(a);
+    await a.locator('[data-testid="starter-braindump"]').click();
+    await a.locator('[data-testid="intent-world"]').click();
+    await expect.poll(async () => (await scene(a)).filter((e) => e.kind === "portal").length).toBe(1);
+    await a.waitForTimeout(600);
+    await a.locator('[data-testid="main-menu-trigger"]').click();
+    await a.getByText("Copy share link").click();
+    await expect(a.locator('[data-testid="toast"]')).toContainText("Includes 1 world");
+    const link = await a.evaluate(() => navigator.clipboard.readText());
+    const b = await (await browser.newContext()).newPage();
+    await openApp(b, link);
+    await expect.poll(async () => (await scene(b)).filter((e) => e.kind === "portal").length).toBe(1);
+    await b.evaluate(() => {
+      const L = (window as any).__lumen;
+      const p = L.api.getSceneElements().find((e: any) => e.customData?.lumen?.kind === "portal");
+      L.api.updateScene({ appState: { selectedElementIds: { [p.id]: true } }, captureUpdate: "NEVER" });
+    });
+    await b.locator('[data-testid="action-enter"]').click();
+    await expect.poll(() => count(b, "note"), { timeout: 8000 }).toBe(12);
+  });
+});
+
 test.describe("responsive", () => {
   test.use({ viewport: { width: 390, height: 780 }, hasTouch: true, isMobile: true });
   test("phone layout: dock sits above the toolbar, nothing overflows", async ({ page }) => {
@@ -120,5 +145,25 @@ test.describe("responsive", () => {
     await page.locator('[data-testid="intent-cluster"]').tap();
     await expect(page.locator('[data-testid="toast"]')).toContainText("themes");
     await shot(page, "13-mobile-clustered");
+  });
+});
+
+test.describe("backup", () => {
+  test("back up everything → restore it as new boards, worlds included", async ({ page }) => {
+    await openApp(page);
+    await page.locator('[data-testid="starter-braindump"]').click();
+    await page.locator('[data-testid="intent-world"]').click();
+    await expect.poll(async () => (await scene(page)).filter((e) => e.kind === "portal").length).toBe(1);
+    await page.waitForTimeout(600);
+    await page.keyboard.press("Control+k");
+    await page.locator('[data-testid="palette-input"]').fill("back up everything");
+    const [dl] = await Promise.all([page.waitForEvent("download"), page.keyboard.press("Enter")]);
+    const path = await dl.path();
+    await expect(page.locator('[data-testid="toast"]')).toContainText("Backed up 1 board");
+    await page.keyboard.press("Control+k");
+    await page.locator('[data-testid="palette-input"]').fill("restore from backup");
+    const [chooser] = await Promise.all([page.waitForEvent("filechooser"), page.keyboard.press("Enter")]);
+    await chooser.setFiles(path!);
+    await expect(page.locator('[data-testid="toast"]')).toContainText("Restored 1 board");
   });
 });
