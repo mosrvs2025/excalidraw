@@ -22,10 +22,10 @@
   --acc-soft: #2b2b4a;
   --shadow: 0 10px 34px -8px rgba(0, 0, 0, 0.7), 0 2px 6px rgba(0, 0, 0, 0.4);
 }
-html, body, #root { height: 100%; margin: 0; }
+html, body, #root { height: 100%; margin: 0; overflow: hidden; }
 body { font-family: var(--font); background: #fbfaf7; overscroll-behavior: none; -webkit-font-smoothing: antialiased; }
 .boot { height: 100%; display: grid; place-items: center; font: 600 22px var(--font); color: #999; letter-spacing: 0.04em; }
-.app { position: fixed; inset: 0; color: var(--ink); font-family: var(--font); }
+.app { position: fixed; inset: 0; overflow: hidden; contain: layout paint; touch-action: pan-x pan-y; color: var(--ink); font-family: var(--font); }
 .app .excalidraw { --color-primary: var(--acc); }
 button { font-family: inherit; }
 

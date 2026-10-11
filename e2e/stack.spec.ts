@@ -390,3 +390,21 @@ test.describe("browser zoom notice", () => {
     await expect(page.locator('[data-testid="zoom-notice"]')).toContainText("0");
   });
 });
+
+test.describe("the UI layer can't be scrolled or panned away", () => {
+  test("wheel/trackpad over the toolbars, panels and controls never moves them", async ({ page }) => {
+    await openApp(page);
+    await page.locator('[data-testid="starter-worlds"]').click();
+    await page.waitForTimeout(1500);
+    const pos = () => page.evaluate(() => { const r = (s: string) => { const b = (document.querySelector(s) as HTMLElement).getBoundingClientRect(); return [Math.round(b.x), Math.round(b.y)]; }; return JSON.stringify({ t: r(".App-toolbar"), m: r(".main-menu-trigger"), p: r(".pill"), z: r(".zoom-actions") }); });
+    const before = await pos();
+    for (const [x, y] of [[640, 40], [100, 300], [60, 770], [1150, 40]]) {
+      await page.mouse.move(x, y);
+      for (const [dx, dy] of [[0, 700], [0, -1400], [500, 0], [-1000, 0], [300, 300]]) await page.mouse.wheel(dx, dy);
+    }
+    await page.waitForTimeout(300);
+    expect(await pos()).toBe(before);
+    const sc = await page.evaluate(() => [document.documentElement.scrollLeft, document.documentElement.scrollTop, document.body.scrollLeft, document.body.scrollTop, (document.querySelector(".app") as HTMLElement).scrollLeft, (document.querySelector(".app") as HTMLElement).scrollTop]);
+    expect(sc).toEqual([0, 0, 0, 0, 0, 0]);
+  });
+});

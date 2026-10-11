@@ -700,20 +700,31 @@ export function Tour({ enabled }: { enabled: boolean }) {
 /** Ctrl+scroll over the UI zooms the *page* (not the canvas), and browsers remember that per site: tools end up off-screen. */
 export const browserZoom = () => (!window.matchMedia?.("(pointer: coarse)").matches && window.outerWidth > 0 && window.innerWidth > 0 ? window.outerWidth / window.innerWidth : 1);
 
+/** Pinch-zooming the *page* (not the canvas) pans fixed UI off-screen; the visual viewport tells us. */
+const pageZoom = () => {
+  const vv = window.visualViewport?.scale ?? 1;
+  const bz = browserZoom();
+  return vv > 1.1 ? vv : bz >= 1.45 ? bz : 1; // (a docked DevTools panel also skews outer/inner width a little, so browser zoom needs a clear margin)
+};
+
 export function ZoomNotice() {
-  const [z, setZ] = useState(() => browserZoom());
+  const [z, setZ] = useState(() => pageZoom());
   const [gone, setGone] = useState(false);
   useEffect(() => {
-    const on = () => setZ(browserZoom());
+    const on = () => setZ(pageZoom());
     window.addEventListener("resize", on);
-    return () => window.removeEventListener("resize", on);
+    window.visualViewport?.addEventListener("resize", on);
+    return () => {
+      window.removeEventListener("resize", on);
+      window.visualViewport?.removeEventListener("resize", on);
+    };
   }, []);
-  if (gone || z < 1.45) return null;
+  if (gone || z < 1.1) return null;
   const mac = /Mac|iPhone|iPad/.test(navigator.platform);
   return (
     <div className="zoomnotice" role="alert" data-testid="zoom-notice">
       <span>
-        This page is zoomed in to about <b>{Math.round(z * 100)}%</b>, so some tools can be off-screen. Press <kbd>{mac ? "⌘" : "Ctrl"}</kbd> <kbd>0</kbd> to reset it.
+        This page is zoomed in to about <b>{Math.round(z * 100)}%</b>, so tools can slide off-screen. Pinch back out, or press <kbd>{mac ? "⌘" : "Ctrl"}</kbd> <kbd>0</kbd> to reset it.
       </span>
       <button className="chip ghost" onClick={() => setGone(true)}>
         Got it
