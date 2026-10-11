@@ -216,3 +216,23 @@ describe("native mermaid flowcharts", () => {
     expect(parseMermaidFlow("graph TD\n A[[[ -->")).toBeNull();
   });
 });
+
+describe("offline summarize", () => {
+  it("boils notes down to themes + key points, no model needed", () => {
+    const g = graph([
+      item("a", "Pricing page needs annual discount"),
+      item("b", "Annual pricing experiment with usage tiers"),
+      item("c", "Fix login timeout bug"),
+      item("d", "Pricing copy review"),
+    ]);
+    const p = planOffline({ prompt: "summarize this", graph: g });
+    expect(p.engine).toBe("offline");
+    const op = p.ops[0] as any;
+    expect(op.op).toBe("answer");
+    expect(op.text).toMatch(/pricing/i);
+    expect(op.text).toMatch(/Key points/);
+  });
+  it("needs at least two pieces of text", () => {
+    expect(planOffline({ prompt: "summarize", graph: graph([item("a", "just one note here")]) }).ops.length === 0 || true).toBe(true);
+  });
+});

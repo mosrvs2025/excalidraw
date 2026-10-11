@@ -170,3 +170,21 @@ test.describe("pile, spread and find", () => {
     await expect(page.locator('[data-testid="crumb"]')).toHaveCount(1);
   });
 });
+
+test.describe("saved views", () => {
+  test("/view saves the camera; ⌘K → View: flies back to it", async ({ page }) => {
+    await openApp(page);
+    await page.locator('[data-testid="starter-braindump"]').click();
+    await page.evaluate(() => (window as any).__lumen.api.scrollToContent((window as any).__lumen.api.getSceneElements(), { fitToViewport: true, viewportZoomFactor: 0.9 }));
+    const cam = () => page.evaluate(() => { const s = (window as any).__lumen.api.getAppState(); return { x: s.scrollX, y: s.scrollY, z: s.zoom.value }; });
+    const home = await cam();
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent("lumen:ask", { detail: "/view Overview" })));
+    await page.locator('[data-testid="intent-input"]').press("Enter");
+    await expect(page.locator('[data-testid="toast"]')).toContainText("Saved view");
+    await page.evaluate(() => (window as any).__lumen.api.updateScene({ appState: { scrollX: 900, scrollY: 700, zoom: { value: 0.4 } }, captureUpdate: "NEVER" }));
+    await page.keyboard.press("Control+k");
+    await page.locator('[data-testid="palette-input"]').fill("view: overview");
+    await page.keyboard.press("Enter");
+    await expect.poll(async () => Math.abs((await cam()).z - home.z) < 0.02 && Math.abs((await cam()).x - home.x) < 3, { timeout: 5000 }).toBe(true);
+  });
+});

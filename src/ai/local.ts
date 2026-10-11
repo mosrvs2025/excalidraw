@@ -336,6 +336,24 @@ export function docFromGraph(g: CanvasGraph, title: string): string {
   return lines.join("\n");
 }
 
+/** Extractive summary: the themes that recur, and the few pieces of text that carry the most of them. */
+export function summarize(g: CanvasGraph): { title: string; text: string } | null {
+  const texts = g.items.filter((i) => i.text && i.text.trim().length > 2);
+  if (texts.length < 2) return null;
+  const freq = new Map<string, number>();
+  texts.forEach((t) => new Set(tokens(t.text)).forEach((w) => freq.set(w, (freq.get(w) ?? 0) + 1)));
+  const themes = [...freq.entries()].filter(([, c]) => c > 1).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([w]) => w);
+  const score = (t: string) => tokens(t).reduce((n, w) => n + (freq.get(w) ?? 0), 0) / Math.sqrt(Math.max(1, tokens(t).length));
+  const key = [...texts].sort((a, b) => score(b.text) - score(a.text)).slice(0, 3);
+  const lines = [
+    `${texts.length} pieces of text.`,
+    themes.length ? `Main themes: ${themes.join(", ")}.` : "",
+    "Key points:",
+    ...key.map((k) => `• ${clean(k.text).replace(/\s+/g, " ").slice(0, 110)}`),
+  ];
+  return { title: "Summary", text: lines.filter(Boolean).join("\n") };
+}
+
 function explain(g: CanvasGraph): string {
   const texts = g.items.filter((i) => i.text);
   const parts: string[] = [];
@@ -447,6 +465,12 @@ export function planOffline(req: IntentRequest): Plan {
   // 1. known scaffolds win when explicitly requested by name
   for (const t of TEMPLATES_LIST) {
     if (!req.intent && q.split(/\s+/).length <= 6 && t.match.test(q.toLowerCase())) return { say: `Set up a ${t.label} board.`, ops: [t.build()], engine: "offline" };
+  }
+
+  // offline summary: no model needed to boil many notes down to themes + key points
+  if (!req.intent && /\b(summari[sz]e|tl;?dr|key points|key takeaways|digest)\b/i.test(q)) {
+    const sm = summarize(g);
+    if (sm) return { say: "", ops: [{ op: "answer", title: sm.title, text: sm.text }], engine: "offline" };
   }
 
   const promptArrows = req.intent ? null : parseArrows(q);

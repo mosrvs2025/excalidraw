@@ -275,6 +275,14 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
   const [exitHint, setExitHint] = useState(0);
   // dropping pictures on pictures: a halo while you hover, an offer when you let go, a burst when the world appears
   type Spot = { x: number; y: number; w: number; h: number };
+  const viewsKey = `lumen:views:${meta.id}`;
+  const [views, setViews] = useState<{ name: string; scrollX: number; scrollY: number; zoom: number }[]>(() => {
+    try {
+      return JSON.parse(localStorage.getItem(`lumen:views:${meta.id}`) || "[]");
+    } catch {
+      return [];
+    }
+  });
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [quick, setQuick] = useState(false);
   const [halo, setHalo] = useState<(Spot & { label: string }) | null>(null);
@@ -901,6 +909,38 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
       }
     }
     return rows;
+  };
+
+
+  /* ───────── saved views: bookmark a camera position, fly back to it any time ───────── */
+  const storeViews = (v: typeof views) => {
+    setViews(v);
+    try {
+      localStorage.setItem(viewsKey, JSON.stringify(v));
+    } catch {}
+  };
+  const saveView = (nameIn: string) => {
+    const a = apiRef.current;
+    if (!a) return;
+    const st = a.getAppState();
+    const name = nameIn.trim().slice(0, 40) || `View ${views.length + 1}`;
+    storeViews([...views.filter((v) => v.name.toLowerCase() !== name.toLowerCase()), { name, scrollX: st.scrollX, scrollY: st.scrollY, zoom: st.zoom.value }].slice(-30));
+    say(`Saved view “${name}”.`, { note: "⌘K → View: … flies you back here." });
+  };
+  const goView = async (v: { scrollX: number; scrollY: number; zoom: number }) => {
+    const a = apiRef.current;
+    if (!a) return;
+    const st = a.getAppState();
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const frames = reduce ? 1 : 24;
+    lockUntil.current = performance.now() + 1500; // flying around must not trip a world doorway
+    for (let f = 1; f <= frames; f++) {
+      const t = f / frames;
+      const e = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+      const z = Math.exp(Math.log(st.zoom.value) + (Math.log(v.zoom) - Math.log(st.zoom.value)) * e);
+      a.updateScene({ appState: { scrollX: st.scrollX + (v.scrollX - st.scrollX) * e, scrollY: st.scrollY + (v.scrollY - st.scrollY) * e, zoom: { value: z } } as any, captureUpdate: CaptureUpdateAction.NEVER });
+      if (!reduce) await sleep(16);
+    }
   };
 
   /** Slide a selection to new positions (and tilts) with a little overshoot; one undo step. */
@@ -1717,6 +1757,8 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
     { id: "app", label: "Make it real", hint: "turn it into a working prototype", icon: "▶", group: "Transform", takesText: true, run: (t: string) => void run(t || "Turn this into a working interactive prototype", "app") },
     { id: "cutout", label: "Remove background", hint: "selected image", icon: "✂", group: "Transform", run: () => void run("Remove the background from this image", "cutout") },
     ...TEMPLATES_LIST.map((t) => ({ id: t.id, label: t.label, hint: t.desc, icon: "▣", group: "Boards" as const, keywords: "template board", run: () => void useTemplate(t.id) })),
+    { id: "view", label: "Save this view", hint: "bookmark where you are", icon: "◎", group: "Go", aliases: ["bookmark"], takesText: true, run: (t: string) => saveView(t) },
+    ...views.map((v) => ({ id: `go-${v.name.toLowerCase().replace(/\s+/g, "-")}`, label: `View: ${v.name}`, hint: "fly there", icon: "↗", group: "Go" as const, run: () => void goView(v) })),
     { id: "pile", label: "Pile up", hint: "gather the selection into a stack", icon: "❏", group: "Worlds", aliases: ["stack"], run: () => void pileSelection() },
     { id: "spread", label: "Spread out", hint: "lay a pile out in a grid", icon: "▦", group: "Worlds", aliases: ["fan", "unstack"], run: () => void spreadSelection() },
     { id: "world", label: "Make it a world", hint: "selection → zoomable board", icon: "◍", group: "Worlds", run: () => void makeWorld(true) },
@@ -1731,6 +1773,8 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
   ];
 
   const commands: Command[] = [
+    { id: "saveview", label: "Save this view…", hint: "bookmark the camera", keywords: "bookmark position", run: () => saveView(window.prompt("Name this view", `View ${views.length + 1}`) ?? "") },
+    ...views.flatMap((v) => [{ id: `v-${v.name}`, label: `View: ${v.name}`, hint: "fly there", keywords: "bookmark go", run: () => void goView(v) }, { id: `vd-${v.name}`, label: `Delete view: ${v.name}`, keywords: "remove bookmark", run: () => storeViews(views.filter((x) => x.name !== v.name)) }]),
     { id: "pile", label: "Pile up selection", keywords: "stack gather", run: () => void pileSelection() },
     { id: "spread", label: "Spread out selection", keywords: "unstack fan grid", run: () => void spreadSelection() },
     { id: "shortcuts", label: "Keyboard shortcuts", hint: "?", keywords: "keys help hotkeys", run: () => setShortcutsOpen(true) },
