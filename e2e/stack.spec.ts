@@ -71,6 +71,43 @@ test.describe("stacking pictures", () => {
   });
 });
 
+test.describe("dropping into a world", () => {
+  test("drag a picture onto a doorway → it flies in, lands inside, and the portal keeps working", async ({ page }) => {
+    await openApp(page);
+    await page.locator('[data-testid="starter-braindump"]').click();
+    await page.locator('[data-testid="intent-world"]').click();
+    await expect.poll(async () => (await scene(page)).filter((e) => e.kind === "portal").length).toBe(1);
+    await page.evaluate(() => {
+      const L = (window as any).__lumen;
+      const c = document.createElement("canvas");
+      c.width = c.height = 120;
+      c.getContext("2d")!.fillStyle = "#2f9e44";
+      c.getContext("2d")!.fillRect(0, 0, 120, 120);
+      L.api.addFiles([{ id: "fz", mimeType: "image/png", dataURL: c.toDataURL("image/png"), created: Date.now() }]);
+      const portal = L.api.getSceneElements().find((e: any) => e.customData?.lumen?.kind === "portal");
+      const [img] = L.restore([{ type: "image", id: "iz", x: portal.x + portal.width + 160, y: portal.y, width: 120, height: 120, fileId: "fz", status: "saved" }], null);
+      L.api.updateScene({ elements: [...L.api.getSceneElements(), img], captureUpdate: "IMMEDIATELY" });
+      L.api.scrollToContent(L.api.getSceneElements(), { fitToViewport: true, viewportZoomFactor: 0.5 });
+    });
+    const from = await centre(page, "iz");
+    const portal = (await scene(page)).find((e) => e.kind === "portal")!;
+    const to = await centre(page, portal.id);
+    await page.mouse.move(from.x, from.y);
+    await page.mouse.down();
+    await page.mouse.move((from.x + to.x) / 2, (from.y + to.y) / 2, { steps: 6 });
+    await page.mouse.move(to.x, to.y, { steps: 6 });
+    await expect(page.locator('[data-testid="drophalo"]')).toContainText("Drop into");
+    await page.mouse.up();
+    await expect(page.locator('[data-testid="stack-go"]')).toContainText("Move into");
+    await page.keyboard.press("Enter");
+    await expect.poll(async () => (await scene(page)).filter((e) => e.type === "image" && !e.isDeleted).length, { timeout: 8000 }).toBe(0);
+    await expect(page.locator('[data-testid="toast"]')).toContainText("Moved into");
+    await page.locator('[data-testid="action-enter"]').click();
+    await expect.poll(async () => (await scene(page)).filter((e) => e.type === "image" && !e.isDeleted).length, { timeout: 8000 }).toBe(1);
+    expect(await count(page, "note")).toBe(12);
+  });
+});
+
 test.describe("typing + slash commands", () => {
   test("/ opens the menu; '/note a; b' adds two notes; ? shows shortcuts", async ({ page }) => {
     await openApp(page);
@@ -96,5 +133,40 @@ test.describe("typing + slash commands", () => {
     await page.keyboard.type("second idea");
     await page.keyboard.press("Enter");
     await expect.poll(async () => await count(page, "note")).toBe(2);
+  });
+});
+
+test.describe("pile, spread and find", () => {
+  test("/pile gathers a selection, /spread lays it out again", async ({ page }) => {
+    await openApp(page);
+    await twoPictures(page);
+    await page.evaluate(() => {
+      const L = (window as any).__lumen;
+      L.api.updateScene({ appState: { selectedElementIds: { ia: true, ib: true } }, captureUpdate: "NEVER" });
+    });
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent("lumen:ask", { detail: "/pile" })));
+    await page.locator('[data-testid="intent-input"]').press("Enter");
+    await expect(page.locator('[data-testid="toast"]')).toContainText("Piled up");
+    const piled = (await scene(page)).filter((e) => e.type === "image");
+    expect(Math.abs(piled[0].x - piled[1].x)).toBeLessThan(60);
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent("lumen:ask", { detail: "/spread" })));
+    await page.locator('[data-testid="intent-input"]').press("Enter");
+    await expect(page.locator('[data-testid="toast"]')).toContainText("Spread out");
+    const spread = (await scene(page)).filter((e) => e.type === "image");
+    expect(Math.abs(spread[0].x - spread[1].x)).toBeGreaterThan(150);
+  });
+
+  test("⌘K finds text on this board and inside worlds, and jumps there", async ({ page }) => {
+    await openApp(page);
+    await page.locator('[data-testid="starter-braindump"]').click();
+    await page.locator('[data-testid="intent-world"]').click();
+    await expect.poll(async () => (await scene(page)).filter((e) => e.kind === "portal").length).toBe(1);
+    await page.keyboard.press("Control+k");
+    await page.locator('[data-testid="palette-input"]').fill("referral");
+    const row = page.locator('[data-testid="palette"] li', { hasText: "Referral program" });
+    await expect(row).toBeVisible();
+    await expect(row).toContainText("Pricing page redesign");
+    await row.click();
+    await expect(page.locator('[data-testid="crumb"]')).toHaveCount(1);
   });
 });

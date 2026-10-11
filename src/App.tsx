@@ -62,6 +62,7 @@ import { TEMPLATES_LIST } from "./ai/local";
 import { worldBus, notifyPreview, touchWorld } from "./worlds/bus";
 import { withStandIns } from "./worlds/standins";
 import { findFreeSpot } from "./canvas/placement";
+import { searchElements } from "./store/search";
 import { ShortcutsDialog, QuickNote } from "./ui/Panels";
 import type { SlashCommand } from "./ui/slash";
 import { splitItems } from "./ui/slash";
@@ -272,10 +273,10 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
   type Spot = { x: number; y: number; w: number; h: number };
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [quick, setQuick] = useState(false);
-  const [halo, setHalo] = useState<Spot | null>(null);
-  const [offer, setOffer] = useState<{ ids: string[]; rect: Spot } | null>(null);
+  const [halo, setHalo] = useState<(Spot & { label: string }) | null>(null);
+  const [offer, setOffer] = useState<{ ids: string[]; rect: Spot; portalId?: string; name?: string } | null>(null);
   const [burst, setBurst] = useState<{ x: number; y: number; k: number } | null>(null);
-  const dragWas = useRef<{ dragging: boolean; target: string | null; ids: string[] }>({ dragging: false, target: null, ids: [] });
+  const dragWas = useRef<{ dragging: boolean; target: string | null; ids: string[]; portal: boolean }>({ dragging: false, target: null, ids: [], portal: false });
   const [editImg, setEditImg] = useState(false);
   const [agentDlg, setAgentDlg] = useState(false);
   const [gallery, setGallery] = useState(false);
@@ -663,6 +664,11 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
         setTimeout(() => api.scrollToContent(el as any, { fitToViewport: true, viewportZoomFactor: 0.5, animate: true, duration: 800, maxZoom: 30 }), 140);
       }
     }
+    if (worldBus.focus) {
+      const id = worldBus.focus;
+      worldBus.focus = null;
+      setTimeout(() => flyTo(id), 350);
+    }
     const t = setTimeout(() => {
       entryZoom.current = api.getAppState().zoom.value;
       prevZoom.current = entryZoom.current;
@@ -750,36 +756,202 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
     return { x: Math.round(p.x), y: Math.round(p.y), w: Math.round(q.x - p.x), h: Math.round(q.y - p.y) };
   };
 
-  /** Called from onChange: show a halo on the picture you're hovering while dragging, and an offer when you drop. */
+  /** Called from onChange: show a halo on what you're hovering while dragging (a picture to stack on, or a world to drop into), and an offer when you let go. */
   const stackWatch = (elements: readonly ExcalidrawElement[], st: AppState) => {
     const w = dragWas.current;
     const dragging = st.selectedElementsAreBeingDragged;
+    const nameOf = (e: ExcalidrawElement) => String((getMeta(e) as any)?.title ?? "this world");
     if (dragging) {
       const ids = Object.keys(st.selectedElementIds).filter((k) => st.selectedElementIds[k]);
       const live = elements.filter((e) => !e.isDeleted);
-      const moving = live.filter((e) => ids.includes(e.id) && e.type === "image");
-      const target = moving.length ? dropTarget(moving.map(boxOf), live.filter((e) => e.type === "image").map(boxOf)) : null;
+      const moving = live.filter((e) => ids.includes(e.id) && !(e as any).containerId);
+      const allImages = moving.length > 0 && moving.every((e) => e.type === "image");
+      // a doorway wins over a picture: dropping into a world is the stronger intent
+      const portalHit = moving.length ? dropTarget(moving.map(boxOf), live.filter(isPortal).map(boxOf), 0.5) : null;
+      const imageHit = !portalHit && allImages ? dropTarget(moving.map(boxOf), live.filter((e) => e.type === "image").map(boxOf)) : null;
+      const target = portalHit ?? imageHit;
       const id = target?.id ?? null;
       if (id !== w.target) {
         w.target = id;
+        w.portal = !!portalHit;
         const el = id ? live.find((e) => e.id === id) : null;
-        setHalo(el ? viewRect(el, st) : null);
+        setHalo(el ? { ...viewRect(el, st), label: portalHit ? `Drop into ${nameOf(el!)}` : "Drop to stack" } : null);
       }
       w.ids = moving.map((e) => e.id);
     } else if (w.dragging) {
       const t = w.target;
+      const wasPortal = w.portal;
       w.target = null;
       setHalo(null);
       if (t && w.ids.length) {
         const live = elements.filter((e) => !e.isDeleted && (e.id === t || w.ids.includes(e.id)));
         const [x1, y1, x2, y2] = getCommonBounds(live);
-        setOffer({ ids: [...w.ids, t], rect: viewRect({ x: x1, y: y1, width: x2 - x1, height: y2 - y1 }, st) });
+        const rect = viewRect({ x: x1, y: y1, width: x2 - x1, height: y2 - y1 }, st);
+        const tEl = live.find((e) => e.id === t);
+        if (wasPortal && tEl) setOffer({ ids: w.ids, rect, portalId: t, name: nameOf(tEl) });
+        else setOffer({ ids: [...w.ids, t], rect });
       }
     }
     w.dragging = dragging;
   };
   const stackWatchRef = useRef(stackWatch);
   stackWatchRef.current = stackWatch;
+
+
+  const acceptOffer = async (o: { ids: string[]; portalId?: string }) => (o.portalId ? moveIntoWorld(o.ids, o.portalId) : stackIntoWorld(o.ids));
+
+  /** Drop things through a doorway: they shrink into the portal, land inside that world, and the preview refreshes. */
+  const moveIntoWorld = async (ids: string[], portalId: string) => {
+    const a = apiRef.current;
+    if (!a) return;
+    setOffer(null);
+    const all = a.getSceneElementsIncludingDeleted();
+    const portal = all.find((e) => e.id === portalId && !e.isDeleted);
+    const childId = portal ? ((getMeta(portal) as any).childId as string | undefined) : undefined;
+    if (!portal || !childId || !projectsRef.current.some((p) => p.id === childId)) return say("That world isn't on this device.");
+    const idset = new Set(ids);
+    for (const e of all) if ((e as any).containerId && idset.has((e as any).containerId)) idset.add(e.id);
+    for (const e of all) if (!e.isDeleted && e.boundElements?.some((b) => b.type === "text" && idset.has(b.id))) idset.add(e.id);
+    for (const e of all) if (!e.isDeleted && e.type === "frame" && idset.has(e.id)) all.filter((c) => c.frameId === e.id).forEach((c) => idset.add(c.id));
+    idset.delete(portalId);
+    const moved = all.filter((e) => idset.has(e.id) && !e.isDeleted);
+    if (!moved.length) return;
+    await checkpoint("Before: move into world", "ai");
+    const child = await loadProject(childId);
+    const childEls = ((child?.elements ?? []) as ExcalidrawElement[]).filter((e) => !e.isDeleted);
+    // land them beside what's already inside, keeping their arrangement
+    const [mx1, my1, mx2, my2] = getCommonBounds(moved);
+    const spot = childEls.length ? findFreeSpot(childEls as any, mx2 - mx1, my2 - my1, (mx1 + mx2) / 2, (my1 + my2) / 2) : { x: mx1, y: my1 };
+    const dx = spot.x - mx1;
+    const dy = spot.y - my1;
+    const files = a.getFiles();
+    const usedFiles = Object.fromEntries(moved.filter((e) => e.type === "image" && (e as any).fileId).map((e) => [(e as any).fileId, files[(e as any).fileId]]).filter(([, f]) => f));
+    const clones = JSON.parse(JSON.stringify(moved)).map((e: any) => ({ ...e, x: e.x + dx, y: e.y + dy, frameId: e.frameId && idset.has(e.frameId) ? e.frameId : null, version: (e.version ?? 1) + 1, versionNonce: Math.floor(Math.random() * 2 ** 31) }));
+    const nextEls = [...childEls, ...clones];
+    const nextFiles = { ...(child?.files ?? {}), ...usedFiles };
+    await saveProject(childId, { ...(child as ProjectData), elements: nextEls as any, files: nextFiles as any });
+    // the little flight: everything shrinks and slides into the doorway
+    const [px, py] = [portal.x + portal.width / 2, portal.y + portal.height / 2];
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const start = moved.map((e) => ({ id: e.id, x: e.x, y: e.y, w: e.width, h: e.height }));
+    const frames = reduce ? 1 : 14;
+    for (let f = 1; f <= frames; f++) {
+      const t = f / frames;
+      const k = 1 - t * t;
+      a.updateScene({
+        elements: a.getSceneElementsIncludingDeleted().map((e) => {
+          const q = start.find((x) => x.id === e.id);
+          if (!q || e.type === "text") return e;
+          const nw = Math.max(4, q.w * k);
+          const nh = Math.max(4, q.h * k);
+          const cx = q.x + q.w / 2 + (px - (q.x + q.w / 2)) * t;
+          const cy = q.y + q.h / 2 + (py - (q.y + q.h / 2)) * t;
+          return newElementWith(e, { x: cx - nw / 2, y: cy - nh / 2, width: nw, height: nh, opacity: Math.round(100 * k) } as any);
+        }),
+        captureUpdate: CaptureUpdateAction.NEVER,
+      });
+      if (!reduce) await sleep(22);
+    }
+    const vp = sceneCoordsToViewportCoords({ sceneX: px, sceneY: py }, a.getAppState());
+    setBurst({ x: vp.x, y: vp.y, k: Date.now() });
+    setTimeout(() => setBurst(null), 1100);
+    // restore real geometry first (so Undo brings back the right sizes), then delete
+    a.updateScene({
+      elements: a.getSceneElementsIncludingDeleted().map((e) => {
+        const q = start.find((x) => x.id === e.id);
+        return q ? newElementWith(e, { x: q.x, y: q.y, width: q.w, height: q.h, opacity: (moved.find((m) => m.id === e.id) as any).opacity, isDeleted: true } as any) : e;
+      }),
+      appState: { selectedElementIds: { [portalId]: true } } as any,
+      captureUpdate: CaptureUpdateAction.IMMEDIATELY,
+    });
+    try {
+      const dark = themeRef.current === "dark";
+      const cv = await exportToCanvas({ elements: withStandIns(nextEls as any), appState: { exportBackground: true, viewBackgroundColor: dark ? "#121212" : "#ffffff", exportWithDarkMode: dark }, files: nextFiles as any, maxWidthOrHeight: 900, exportPadding: 24 });
+      const url = cv.toDataURL("image/jpeg", 0.82);
+      await savePreview(childId, url);
+      notifyPreview(childId, url);
+    } catch {}
+    touchWorld(childId);
+    say(`Moved into “${(getMeta(portal) as any).title ?? "the world"}”.`, { note: "Zoom in to find it there. Undo puts it back (and removes it from the world only if you undo there).", undo: true });
+  };
+
+
+
+  /** ⌘K "find anywhere": this board first (live), then every world on this device. */
+  const flyTo = (elId: string) => {
+    const a = apiRef.current;
+    const el = a?.getSceneElements().find((e) => e.id === elId);
+    if (!a || !el) return;
+    a.scrollToContent(el as any, { fitToViewport: true, viewportZoomFactor: 0.5, animate: true, duration: 600, maxZoom: 2 });
+    a.updateScene({ appState: { selectedElementIds: { [el.id]: true } } as any, captureUpdate: CaptureUpdateAction.NEVER });
+  };
+  const searchEverywhere = async (q: string) => {
+    const a = apiRef.current;
+    const rows: { id: string; label: string; hint?: string; run: () => void }[] = [];
+    for (const h of searchElements(a?.getSceneElements() ?? [], q, 6)) rows.push({ id: h.elementId, label: `Find: ${h.text}`, hint: "here", run: () => flyTo(h.elementId) });
+    for (const p of projectsRef.current) {
+      if (p.id === meta.id || rows.length >= 14) continue;
+      const data = await loadProject(p.id);
+      for (const h of searchElements((data?.elements ?? []) as any[], q, 2)) {
+        rows.push({ id: p.id + h.elementId, label: `Find: ${h.text}`, hint: p.name, run: () => ((worldBus.focus = h.elementId), onOpen(p.id)) });
+      }
+    }
+    return rows;
+  };
+
+  /** Slide a selection to new positions (and tilts) with a little overshoot; one undo step. */
+  const tweenTo = async (to: { id: string; x: number; y: number; angle: number }[]) => {
+    const a = apiRef.current;
+    if (!a) return;
+    const from = to.map((q) => {
+      const e = a.getSceneElements().find((x) => x.id === q.id)!;
+      return { id: q.id, x: e.x, y: e.y, angle: e.angle };
+    });
+    await checkpoint("Before: arrange", "ai");
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const frames = reduce ? 1 : 16;
+    for (let f = 1; f <= frames; f++) {
+      const t = easeOutBack(f / frames);
+      a.updateScene({
+        elements: a.getSceneElementsIncludingDeleted().map((e) => {
+          const i = from.findIndex((q) => q.id === e.id);
+          if (i < 0) return e;
+          return newElementWith(e, { x: from[i].x + (to[i].x - from[i].x) * t, y: from[i].y + (to[i].y - from[i].y) * t, angle: (from[i].angle + (to[i].angle - from[i].angle) * t) as any });
+        }),
+        captureUpdate: f === frames ? CaptureUpdateAction.IMMEDIATELY : CaptureUpdateAction.NEVER,
+      });
+      if (!reduce) await sleep(22);
+    }
+  };
+  const selectedTop = () => {
+    const a = apiRef.current;
+    if (!a) return [];
+    const ids = Object.keys(a.getAppState().selectedElementIds);
+    return a.getSceneElements().filter((e) => ids.includes(e.id) && !(e as any).containerId && e.type !== "arrow");
+  };
+  /** Gather the selection into a loose pile (stays on the canvas — no world). */
+  const pileSelection = async () => {
+    const els = selectedTop();
+    if (els.length < 2) return say("Select two or more things to pile up.");
+    const [x1, y1, x2, y2] = getCommonBounds(els);
+    await tweenTo(pileLayout(els.map(boxOf), { x: (x1 + x2) / 2, y: (y1 + y2) / 2 }).map((q) => ({ ...q })));
+    say("Piled up.", { note: "Spread them back out any time (/spread).", undo: true });
+  };
+  /** Lay a pile out in a tidy grid around where it sits, so nothing hides anything. */
+  const spreadSelection = async () => {
+    const els = selectedTop();
+    if (els.length < 2) return say("Select a pile to spread out.");
+    const [x1, y1, x2, y2] = getCommonBounds(els);
+    const cells = gridLayout(els.map(boxOf), 36, 1100);
+    const gx = Math.min(...cells.map((c) => c.x));
+    const gy = Math.min(...cells.map((c) => c.y));
+    const gw = Math.max(...cells.map((c, i) => c.x + els[i].width)) - gx;
+    const gh = Math.max(...cells.map((c, i) => c.y + els[i].height)) - gy;
+    const ox = (x1 + x2) / 2 - gw / 2 - gx;
+    const oy = (y1 + y2) / 2 - gh / 2 - gy;
+    await tweenTo(cells.map((c) => ({ id: c.id, x: c.x + ox, y: c.y + oy, angle: 0 })));
+    say("Spread out.", { undo: true });
+  };
 
   /** Tidy the pictures into a pile (with a little bounce), then fold the pile into a world. */
   const stackIntoWorld = async (ids: string[]) => {
@@ -907,8 +1079,8 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
 
   const offerRef = useRef(offer);
   offerRef.current = offer;
-  const stackRef = useRef(stackIntoWorld);
-  stackRef.current = stackIntoWorld;
+  const acceptRef = useRef<(o: NonNullable<typeof offer>) => Promise<void>>(async () => {});
+  acceptRef.current = (o) => acceptOffer(o);
   useEffect(() => {
     if (!offer) return;
     const t = setTimeout(() => setOffer(null), 9000);
@@ -937,7 +1109,7 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
         e.preventDefault();
         e.stopPropagation();
         const o = offerRef.current;
-        if (e.key === "Enter") void stackRef.current(o.ids);
+        if (e.key === "Enter") void acceptRef.current(o);
         else setOffer(null);
       } else if (e.key === "/" && !typing && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
@@ -1487,6 +1659,8 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
     { id: "app", label: "Make it real", hint: "turn it into a working prototype", icon: "▶", group: "Transform", takesText: true, run: (t: string) => void run(t || "Turn this into a working interactive prototype", "app") },
     { id: "cutout", label: "Remove background", hint: "selected image", icon: "✂", group: "Transform", run: () => void run("Remove the background from this image", "cutout") },
     ...TEMPLATES_LIST.map((t) => ({ id: t.id, label: t.label, hint: t.desc, icon: "▣", group: "Boards" as const, keywords: "template board", run: () => void useTemplate(t.id) })),
+    { id: "pile", label: "Pile up", hint: "gather the selection into a stack", icon: "❏", group: "Worlds", aliases: ["stack"], run: () => void pileSelection() },
+    { id: "spread", label: "Spread out", hint: "lay a pile out in a grid", icon: "▦", group: "Worlds", aliases: ["fan", "unstack"], run: () => void spreadSelection() },
     { id: "world", label: "Make it a world", hint: "selection → zoomable board", icon: "◍", group: "Worlds", run: () => void makeWorld(true) },
     { id: "newworld", label: "New world here", hint: "a doorway to a fresh board", icon: "◌", group: "Worlds", run: () => void makeWorld(false) },
     ...(parent ? [{ id: "up", label: `Up to ${parent.name}`, hint: "leave this world", icon: "↑", group: "Worlds" as const, run: () => void onExitWorld() }] : []),
@@ -1499,6 +1673,8 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
   ];
 
   const commands: Command[] = [
+    { id: "pile", label: "Pile up selection", keywords: "stack gather", run: () => void pileSelection() },
+    { id: "spread", label: "Spread out selection", keywords: "unstack fan grid", run: () => void spreadSelection() },
     { id: "shortcuts", label: "Keyboard shortcuts", hint: "?", keywords: "keys help hotkeys", run: () => setShortcutsOpen(true) },
     { id: "newworld", label: "New world here", hint: "a doorway to a fresh board", keywords: "portal zoom nested infinite", run: () => makeWorld(false) },
     { id: "makeworld", label: "Make selection a world", hint: "zoom into what you drew", keywords: "portal zoom nested infinite", run: () => makeWorld(true) },
@@ -1837,10 +2013,10 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
         onNote={(t) => void addNotes(splitItems(t))}
       />}
 
-      {halo && <div className="drophalo" style={{ left: halo.x - 8, top: halo.y - 8, width: halo.w + 16, height: halo.h + 16 }} aria-hidden data-testid="drophalo"><span>Drop to stack</span></div>}
+      {halo && <div className="drophalo" style={{ left: halo.x - 8, top: halo.y - 8, width: halo.w + 16, height: halo.h + 16 }} aria-hidden data-testid="drophalo"><span>{halo.label}</span></div>}
       {offer && (
         <div className="stackoffer" style={{ left: Math.min(Math.max(8, offer.rect.x + offer.rect.w / 2), window.innerWidth - 8), top: Math.min(offer.rect.y + offer.rect.h + 14, window.innerHeight - 120) }} onPointerDown={(e) => e.stopPropagation()} data-testid="stackoffer">
-          <button className="chip primary" onClick={() => void stackIntoWorld(offer.ids)} data-testid="stack-go"><i>🗂</i>Stack into a world<kbd>↵</kbd></button>
+          <button className="chip primary" onClick={() => void acceptOffer(offer)} data-testid="stack-go"><i>{offer.portalId ? "↘" : "🗂"}</i>{offer.portalId ? `Move into ${offer.name}` : "Stack into a world"}<kbd>↵</kbd></button>
           <button className="chip ghost" onClick={() => setOffer(null)} aria-label="Dismiss"><kbd>Esc</kbd></button>
         </div>
       )}
@@ -1881,7 +2057,7 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
       )}
       {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
       {quick && <QuickNote x={Math.round(window.innerWidth / 2 - 110)} y={Math.round(window.innerHeight / 2 - 80)} bg="#fff3bf" border="#e19b00" onCommit={(t) => void addNotes([t])} onClose={() => setQuick(false)} />}
-      {palette && <CommandPalette commands={commands} onAsk={(t) => run(t)} onClose={() => setPalette(false)} />}
+      {palette && <CommandPalette search={searchEverywhere} commands={commands} onAsk={(t) => run(t)} onClose={() => setPalette(false)} />}
       {gallery && <TemplateGallery templates={TEMPLATES_LIST} onPick={useTemplate} onClose={() => setGallery(false)} />}
       {panel === "history" && <HistoryPanel versions={versions} current={api?.getSceneElementsIncludingDeleted() ?? []} onRestore={restore} onSave={async (l) => (await checkpoint(l, "manual"), setVersions(await listVersions(meta.id)), say(`Saved checkpoint “${l}”.`))} onClose={() => setPanel(null)} />}
       {panel === "settings" && <SettingsDialog settings={settings} serverClaude={serverClaude} onSave={(s) => (saveSettings(s), setSettings(s))} onTest={testConnection} onClose={() => setPanel(null)} />}

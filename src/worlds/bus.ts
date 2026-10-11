@@ -5,7 +5,7 @@ import { getMeta, getPreview } from "../store/projects";
  * Glue between portal objects (rendered deep inside Excalidraw) and the app shell.
  * The workspace installs `enter`; portals call it. Previews are cached and refreshed when a world saves.
  */
-export const worldBus: { enter: (childId: string, portalElementId: string) => void; flush: () => Promise<void> } = { enter: () => {}, flush: async () => {} };
+export const worldBus: { enter: (childId: string, portalElementId: string) => void; flush: () => Promise<void>; /** element to fly to once the next board has loaded (search results) */ focus: string | null } = { enter: () => {}, flush: async () => {}, focus: null };
 
 /** Re-read a world's name/preview (after a rename or save). */
 export const touchWorld = (id: string) => window.dispatchEvent(new CustomEvent(PREVIEW_EVENT, { detail: id }));

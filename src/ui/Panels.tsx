@@ -418,12 +418,19 @@ export interface Command {
   run: () => void;
 }
 
-export function CommandPalette({ commands, onAsk, onClose }: { commands: Command[]; onAsk: (text: string) => void; onClose: () => void }) {
+export function CommandPalette({ commands, onAsk, onClose, search }: { commands: Command[]; onAsk: (text: string) => void; onClose: () => void; search?: (q: string) => Promise<{ id: string; label: string; hint?: string; run: () => void }[]> }) {
   const [q, setQ] = useState("");
   const [i, setI] = useState(0);
+  const [found, setFound] = useState<{ id: string; label: string; hint?: string; run: () => void }[]>([]);
+  useEffect(() => {
+    if (!search || q.trim().length < 2) return setFound([]);
+    let live = true;
+    const t = setTimeout(() => search(q).then((r) => live && setFound(r)).catch(() => {}), 140);
+    return () => ((live = false), clearTimeout(t));
+  }, [q]);
   const query = q.trim().toLowerCase();
   const matches = commands.filter((c) => !query || (c.label + " " + (c.keywords ?? "") + " " + (c.hint ?? "")).toLowerCase().includes(query)).slice(0, 9);
-  const rows: (Command | { id: "ask"; label: string; run: () => void; hint?: string })[] = query ? [...matches, { id: "ask", label: `Ask Lumen: “${q.trim()}”`, hint: "run as a prompt", run: () => onAsk(q.trim()) }] : matches;
+  const rows: (Command | { id: string; label: string; run: () => void; hint?: string })[] = query ? [...matches, ...found.map((f) => ({ ...f, id: "find:" + f.id })), { id: "ask", label: `Ask Lumen: “${q.trim()}”`, hint: "run as a prompt", run: () => onAsk(q.trim()) }] : matches;
   const act = (c: { run: () => void }) => {
     onClose();
     setTimeout(c.run, 0);
