@@ -590,6 +590,7 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
   /* ───────── worlds: zoom into a portal to enter another board; zoom far out to leave ───────── */
   const prevZoom = useRef(initial.view?.zoom ?? 1);
   const lockUntil = useRef(performance.now() + 1500); // no instant re-triggering right after arriving
+  const arrivedAt = useRef(arrival ? performance.now() : 0);
   const diving = useRef(false);
   const projectsRef = useRef(projects);
   projectsRef.current = projects;
@@ -1110,6 +1111,19 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
       updateSelection(elements, appState);
       worldTickRef.current(elements, appState);
       stackWatchRef.current(elements, appState);
+      // a world / live object's placeholder link must never be edited away (it would lose its embed view)
+      const broken = elements.filter((e) => !e.isDeleted && e.type === "embeddable" && getMeta(e) && !String((e as any).link ?? "").startsWith(LIVE_HOST));
+      if (broken.length && apiRef.current) {
+        const ids = new Set(broken.map((e) => e.id));
+        setTimeout(
+          () =>
+            apiRef.current?.updateScene({
+              elements: apiRef.current.getSceneElementsIncludingDeleted().map((e) => (ids.has(e.id) ? newElementWith(e, { link: `${LIVE_HOST}/o/${e.id}` } as any) : e)),
+              captureUpdate: CaptureUpdateAction.NEVER,
+            }),
+          0,
+        );
+      }
       const view = { scrollX: appState.scrollX, scrollY: appState.scrollY, zoom: appState.zoom.value };
       const viewChanged = !viewRef.current || viewRef.current.scrollX !== view.scrollX || viewRef.current.scrollY !== view.scrollY || viewRef.current.zoom !== view.zoom;
       viewRef.current = view;
@@ -1151,13 +1165,21 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
   // Ctrl/⌘+scroll or a trackpad pinch over anything but the canvas would zoom the whole *page* (menus, tooltips and all).
   // Excalidraw zooms the canvas itself; we just stop the browser from zooming the app out from under it.
   useEffect(() => {
-    const wheel = (e: WheelEvent) => e.ctrlKey && e.preventDefault();
+    const wheel = (e: WheelEvent) => {
+      if (e.ctrlKey) e.preventDefault();
+      // you were still scrolling/pinching when the doorway swallowed you: that momentum must not carry on inside the new
+      // world (you'd land at 20× and need a dozen more flicks to get out)
+      if (arrivedAt.current && performance.now() - arrivedAt.current < 900) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+    };
     const gesture = (e: Event) => e.preventDefault();
-    window.addEventListener("wheel", wheel, { passive: false });
+    window.addEventListener("wheel", wheel, { passive: false, capture: true });
     window.addEventListener("gesturestart", gesture);
     window.addEventListener("gesturechange", gesture);
     return () => {
-      window.removeEventListener("wheel", wheel);
+      window.removeEventListener("wheel", wheel, { capture: true } as any);
       window.removeEventListener("gesturestart", gesture);
       window.removeEventListener("gesturechange", gesture);
     };

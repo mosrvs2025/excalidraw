@@ -315,3 +315,65 @@ test.describe("desktop: panels don't hide the welcome", () => {
     expect(t.x).toBeGreaterThan(640);
   });
 });
+
+test.describe("worlds: zoom feel + link safety", () => {
+  async function worldFromPicture(page: Page) {
+    await page.evaluate(() => {
+      const L = (window as any).__lumen;
+      const c = document.createElement("canvas");
+      c.width = c.height = 200;
+      c.getContext("2d")!.fillStyle = "#3a6";
+      c.getContext("2d")!.fillRect(0, 0, 200, 200);
+      L.api.addFiles([{ id: "f1", mimeType: "image/png", dataURL: c.toDataURL(), created: Date.now() }]);
+      const [img] = L.restore([{ type: "image", id: "i1", x: 0, y: 0, width: 200, height: 200, fileId: "f1", status: "saved" }], null);
+      L.api.updateScene({ elements: [img], appState: { selectedElementIds: { i1: true } }, captureUpdate: "IMMEDIATELY" });
+    });
+    await page.locator('[data-testid="intent-world"]').click();
+    await expect.poll(async () => (await scene(page)).filter((e) => e.kind === "portal").length).toBe(1);
+    await page.evaluate(() => {
+      const a = (window as any).__lumen.api;
+      const e = a.getSceneElements().find((x: any) => x.customData?.lumen?.kind === "portal");
+      a.scrollToContent(e, { fitToViewport: true, viewportZoomFactor: 0.3, animate: false });
+    });
+    await page.waitForTimeout(400);
+  }
+
+  test("a world's link can't be edited away", async ({ page }) => {
+    await openApp(page);
+    await worldFromPicture(page);
+    await page.evaluate(() => {
+      const a = (window as any).__lumen.api;
+      a.updateScene({ elements: a.getSceneElementsIncludingDeleted().map((e: any) => (e.customData?.lumen?.kind === "portal" ? { ...e, link: "https://example.com", version: e.version + 1, versionNonce: e.versionNonce + 1 } : e)), captureUpdate: "NEVER" });
+    });
+    await expect
+      .poll(async () => page.evaluate(() => (window as any).__lumen.api.getSceneElements().find((e: any) => e.customData?.lumen?.kind === "portal").link), { timeout: 5000 })
+      .toContain("lumen.live");
+  });
+
+  test("scroll-zooming through a doorway doesn't carry on into the world (no 20× overshoot)", async ({ page }) => {
+    await openApp(page);
+    await worldFromPicture(page);
+    const pc = await centre(page, (await scene(page)).find((e) => e.kind === "portal")!.id);
+    await page.mouse.move(pc.x, pc.y);
+    const flick = async (dy: number) => {
+      await page.keyboard.down("Control");
+      await page.mouse.wheel(0, dy);
+      await page.keyboard.up("Control");
+      await page.waitForTimeout(90);
+    };
+    for (let i = 0; i < 40 && (await page.locator('[data-testid="crumb"]').count()) === 0; i++) await flick(-250);
+    for (let i = 0; i < 5; i++) await flick(-250); // trackpad momentum after you stop
+    await expect(page.locator('[data-testid="crumb"]')).toHaveCount(1);
+    await page.waitForTimeout(1500);
+    const z = await page.evaluate(() => (window as any).__lumen.api.getAppState().zoom.value);
+    expect(z).toBeLessThan(8);
+    // and a handful of flicks outward leaves the world again
+    for (let i = 0; i < 14; i++) {
+      await page.keyboard.down("Control");
+      await page.mouse.wheel(0, 250);
+      await page.keyboard.up("Control");
+      await page.waitForTimeout(90);
+    }
+    await expect(page.locator('[data-testid="crumb"]')).toHaveCount(0, { timeout: 6000 });
+  });
+});
