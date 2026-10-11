@@ -261,3 +261,18 @@ test.describe("phone: overlays step aside", () => {
     expect(w.y + w.height).toBeLessThanOrEqual(d.y + 2);
   });
 });
+
+test.describe("desktop: panels don't hide the welcome", () => {
+  test("opening Excalidraw's Library sidebar keeps the starters visible and clickable; the tour clears the style panel", async ({ page }) => {
+    await openApp(page, "/", { tour: true });
+    await page.locator(".default-sidebar-trigger").click();
+    await expect(page.locator(".app")).not.toHaveClass(/ui-open/);
+    expect(await page.evaluate(() => getComputedStyle(document.querySelector(".welcome")!).opacity)).toBe("1");
+    await page.locator(".sidebar-close, [aria-label='Close']").first().click({ trial: true }).catch(() => {});
+    await page.locator('[data-testid="starter-braindump"]').click();
+    await expect.poll(async () => await count(page, "note")).toBe(12);
+    // the tour card sits bottom-right, clear of the left-hand style panel
+    const t = (await page.locator('[data-testid="tour"]').boundingBox())!;
+    expect(t.x).toBeGreaterThan(640);
+  });
+});

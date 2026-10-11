@@ -1095,7 +1095,8 @@ function Workspace({ meta, initial, projects, topLevel, trail, arrival, focusPor
         setTheme(appState.theme as "light" | "dark");
       }
       if (!alive.current) return; // this board has been left; ignore the canvas's death throes
-      const open = !!(appState.openMenu || appState.openPopup || appState.openSidebar || appState.openDialog);
+      // only phones need this: there Excalidraw's menus are full-screen sheets that our overlays would paint over
+      const open = window.innerWidth < 700 && !!(appState.openMenu || appState.openPopup || appState.openSidebar || appState.openDialog);
       setUiOpen((u) => (u === open ? u : open));
       updateSelection(elements, appState);
       worldTickRef.current(elements, appState);
